@@ -85,6 +85,17 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
           </p>
         </Row>
 
+        {isEpub && settings.flow === 'paginated' && (
+          <label className="toggle toggle-row">
+            <input
+              type="checkbox"
+              checked={settings.pageAnimation !== false}
+              onChange={(e) => set({ pageAnimation: e.target.checked })}
+            />
+            <span>Animate page turns</span>
+          </label>
+        )}
+
         {isEpub ? (
           <>
             <Row label="Text size" value={`${settings.fontSize}%`}>

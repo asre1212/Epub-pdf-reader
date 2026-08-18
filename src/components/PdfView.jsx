@@ -12,6 +12,7 @@ import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { closePdf, openPdf } from '../lib/pdf.js';
 import { hitTest, normalizeSelectionRects } from '../lib/pdfRects.js';
+import { attachDragHighlighter } from '../lib/dragHighlight.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
 const BUFFER = 2; // pages kept rendered on either side of the viewport
@@ -29,6 +30,7 @@ const PdfView = forwardRef(function PdfView(
     onProgress,
     onMeta,
     onToggleChrome,
+    highlighterOn,
     notify,
   },
   ref,
@@ -40,6 +42,8 @@ const PdfView = forwardRef(function PdfView(
   const pendingFocusRef = useRef(focusHighlightId);
   const restoredRef = useRef(false);
   const pointerRef = useRef(null);
+  const highlighterRef = useRef(highlighterOn);
+  const [preview, setPreview] = useState(null);
 
   const [pdf, setPdf] = useState(null);
   const [status, setStatus] = useState('loading');
@@ -53,6 +57,7 @@ const PdfView = forwardRef(function PdfView(
   const [, forceSize] = useState(0);
 
   highlightsRef.current = highlights;
+  highlighterRef.current = highlighterOn;
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -250,6 +255,7 @@ const PdfView = forwardRef(function PdfView(
 
   const onPointerUp = useCallback(
     (event) => {
+      if (highlighterRef.current) return; // the drag highlighter owns the gesture
       const start = pointerRef.current;
       pointerRef.current = null;
 
@@ -337,26 +343,65 @@ const PdfView = forwardRef(function PdfView(
 
   /* ------------------------------------------------------------- highlights */
 
-  const createHighlight = useCallback(
-    async (colorId, note = '') => {
-      if (!menu || menu.mode !== 'create') return null;
-      const first = menu.rects[0];
-      const record = {
+  /** Saves a highlight from normalised page rects, wherever they came from. */
+  const saveHighlight = useCallback(
+    ({ rects, text, color, note = '' }) => {
+      const first = rects[0];
+      return onCreateHighlight({
         bookId: book.id,
         format: 'pdf',
         page: first.p,
-        rects: menu.rects,
-        text: menu.text,
+        rects,
+        text,
         note,
-        color: colorId,
+        color,
         order: first.p + first.y,
         createdAt: Date.now(),
-      };
+      });
+    },
+    [book.id, onCreateHighlight],
+  );
+
+  // Highlighter mode: drag across the text layer instead of selecting it, using
+  // the same engine as the EPUB view pointed at the top-level document.
+  useEffect(() => {
+    if (!highlighterOn) {
+      setPreview(null);
+      return undefined;
+    }
+    return attachDragHighlighter({
+      doc: document,
+      isEnabled: () => highlighterRef.current,
+      containerFor: (target) => target?.closest?.('.pdf-page'),
+      onPreview: (rects) =>
+        setPreview(
+          rects && {
+            color: colorHex(settings.defaultColor),
+            rects: rects.map((r) => ({
+              left: r.left,
+              top: r.top,
+              width: r.width,
+              height: r.height,
+            })),
+          },
+        ),
+      onCommit: ({ range, text }) => {
+        const rects = normalizeSelectionRects(range, pageBoxes());
+        if (!rects.length) return;
+        saveHighlight({ rects, text, color: settings.defaultColor });
+      },
+      onTap: () => onToggleChrome(),
+    });
+  }, [highlighterOn, settings.defaultColor, pageBoxes, saveHighlight, onToggleChrome]);
+
+  const createHighlight = useCallback(
+    async (colorId, note = '') => {
+      if (!menu || menu.mode !== 'create') return null;
       menu.clear?.();
       closeMenu();
-      return onCreateHighlight(record);
+      return saveHighlight({ rects: menu.rects, text: menu.text, color: colorId, note });
     },
-    [menu, book.id, closeMenu, onCreateHighlight],
+    [menu, closeMenu, saveHighlight],
   );
 
   const focusHighlight = useCallback(
@@ -412,7 +457,13 @@ const PdfView = forwardRef(function PdfView(
     <>
       <div
         ref={scrollRef}
-        className={`pdf-scroll${settings.flow === 'paginated' ? ' is-snapping' : ''}`}
+        className={[
+          'pdf-scroll',
+          settings.flow === 'paginated' ? 'is-snapping' : '',
+          highlighterOn ? 'is-highlighting' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         style={{ padding: `12px ${padding}px 32px` }}
         onPointerDown={(event) => {
           pointerRef.current = { x: event.clientX, y: event.clientY };
@@ -441,6 +492,23 @@ const PdfView = forwardRef(function PdfView(
             );
           })}
       </div>
+
+      {preview && (
+        <div className="drag-preview" aria-hidden="true">
+          {preview.rects.map((rect, index) => (
+            <span
+              key={index}
+              style={{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+                background: preview.color,
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {menu && (
         <SelectionMenu

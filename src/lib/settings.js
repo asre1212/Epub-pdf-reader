@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = {
   margin: 6, // percent of the viewport width, both formats
   flow: 'paginated', // paginated | scrolled
   justify: false,
+  pageAnimation: true, // slide-and-fade across a page turn
   pdfFit: 'width', // width | page — what 100% zoom means for a PDF
   pdfZoom: 1, // multiplier applied on top of the fit
   defaultColor: 'yellow',

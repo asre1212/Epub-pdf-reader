@@ -22,6 +22,17 @@ saves the highlight. Tap an existing highlight to recolour it, attach a note, co
 it, or remove it. The contents drawer lists both the table of contents and the
 highlights you have made in the book so far.
 
+**Highlighter mode** — the pen button in the reader bar. Turn it on and drag a
+finger across text: the passage highlights as you go, snapped to whole words, in
+whichever colour the strip below the bar has selected. No long press, no
+selection handles. Taps still turn the page while it is on, and scrolling is
+suspended so a drag is never mistaken for a scroll — press *Done*, or Escape, to
+go back to normal. It works in both EPUBs and PDFs.
+
+Page turns slide and fade rather than cutting; *Animate page turns* in settings
+turns that off, and it is skipped anyway when the system asks for reduced
+motion.
+
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,
 typeface, letter spacing, justification, page margin, and how pages scroll:
 page turns or one continuous column for EPUBs, snap-to-page or continuous scroll
@@ -135,12 +146,33 @@ if Playwright has not downloaded a browser of its own.
 | `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
+| `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |
 | `src/lib/backup.js` | Building, parsing and merging notes backups |
 | `src/lib/printNotes.js` / `components/NotesPrintSheet.jsx` | The PDF export: a print-only rendition of the notepad |
 | `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
 | `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
 | `src/sw.js` | Precaching, offline navigation, the skip-waiting handler, and the Web Share Target |
 | `.github/workflows/deploy.yml` | Builds and publishes the site to GitHub Pages |
+
+### Highlighter mode
+
+Touch text selection is the weak point of highlighting in a reader. On iOS it
+means a long press, a magnifier and two drag handles, and inside epub.js's
+sandboxed iframe the selection events that go with it are unreliable — which is
+why highlighting EPUBs on an iPad did not work.
+
+`dragHighlight.js` does not use the native selection at all. It hit-tests a caret
+position under the finger on the way down and again on every move
+(`caretRangeFromPoint`, falling back to `caretPositionFromPoint`), builds the
+Range itself, and grows it out to whole words. That behaves the same in every
+engine. While the mode is on, the content gets `user-select: none`,
+`touch-action: none` and `-webkit-touch-callout: none` so nothing competes for
+the gesture; a press that never moves is reported separately and still turns the
+page.
+
+The EPUB view converts the finished Range to a CFI with `contents.cfiFromRange`,
+and the PDF view converts it to page-relative rectangles — so a dragged highlight
+is stored exactly like a selected one.
 
 ### Anchoring highlights
 

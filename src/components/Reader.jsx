@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SettingsSheet from './SettingsSheet.jsx';
 import TocDrawer from './TocDrawer.jsx';
+import { HIGHLIGHT_COLORS, colorHex } from '../lib/highlightColors.js';
 import { getBookFile, newId } from '../lib/db.js';
 import { THEMES } from '../lib/settings.js';
 
@@ -26,6 +27,9 @@ export default function Reader({
   const [chrome, setChrome] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
+  // A per-session mode rather than a saved setting: it suppresses scrolling and
+  // text selection, so it should not be a surprise the next time a book opens.
+  const [highlighterOn, setHighlighterOn] = useState(false);
   const [meta, setMeta] = useState({
     toc: [],
     chapter: '',
@@ -65,11 +69,12 @@ export default function Reader({
       if (event.key !== 'Escape') return;
       if (showSettings) setShowSettings(false);
       else if (showToc) setShowToc(false);
+      else if (highlighterOn) setHighlighterOn(false);
       else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, showToc, onClose]);
+  }, [showSettings, showToc, highlighterOn, onClose]);
 
   // Optional wake lock, released whenever the reader is hidden or closed.
   useEffect(() => {
@@ -108,8 +113,20 @@ export default function Reader({
 
   return (
     <div
-      className={`reader theme-${settings.theme}${chrome ? '' : ' is-immersive'}`}
-      style={{ '--paper': palette.bg, '--ink': palette.fg, '--ink-muted': palette.muted }}
+      className={[
+        'reader',
+        `theme-${settings.theme}`,
+        chrome ? '' : 'is-immersive',
+        highlighterOn ? 'is-highlighter-on' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      style={{
+        '--paper': palette.bg,
+        '--ink': palette.fg,
+        '--ink-muted': palette.muted,
+        '--highlighter': colorHex(settings.defaultColor),
+      }}
     >
       <header className="reader-bar reader-top">
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to library">
@@ -129,6 +146,32 @@ export default function Reader({
           <strong>{book.title}</strong>
           {subtitle && <span>{subtitle}</span>}
         </div>
+
+        <button
+          type="button"
+          className={highlighterOn ? 'icon-btn icon-btn-on' : 'icon-btn'}
+          onClick={() => setHighlighterOn((on) => !on)}
+          aria-pressed={highlighterOn}
+          aria-label={highlighterOn ? 'Turn the highlighter off' : 'Turn the highlighter on'}
+          title="Highlighter"
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path
+              d="M4 19.5h5l1.3-1.3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            />
+            <path
+              d="M9.4 17.2 6.8 14.6 14.9 6.5a1.9 1.9 0 0 1 2.6 0l0 0a1.9 1.9 0 0 1 0 2.6z"
+              fill={highlighterOn ? 'currentColor' : 'none'}
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
 
         <button
           type="button"
@@ -168,6 +211,28 @@ export default function Reader({
         </button>
       </header>
 
+      {highlighterOn && (
+        <div className="highlightbar">
+          <span className="highlightbar-hint">Drag across text to highlight</span>
+          <div className="swatch-row" role="group" aria-label="Highlighter colour">
+            {HIGHLIGHT_COLORS.map((color) => (
+              <button
+                key={color.id}
+                type="button"
+                className={settings.defaultColor === color.id ? 'swatch is-on' : 'swatch'}
+                style={{ '--swatch': color.hex }}
+                onClick={() => onChangeSettings({ defaultColor: color.id })}
+                aria-label={color.label}
+                aria-pressed={settings.defaultColor === color.id}
+              />
+            ))}
+          </div>
+          <button type="button" className="btn btn-small" onClick={() => setHighlighterOn(false)}>
+            Done
+          </button>
+        </div>
+      )}
+
       <div className="reader-stage">
         {missing && (
           <div className="view-status">
@@ -190,6 +255,7 @@ export default function Reader({
               onProgress={onProgress}
               onMeta={handleMeta}
               onToggleChrome={toggleChrome}
+              highlighterOn={highlighterOn}
               notify={notify}
             />
           </Suspense>

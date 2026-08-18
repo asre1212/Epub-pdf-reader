@@ -25,6 +25,7 @@ export default function Library({
   onDelete,
   onRename,
   onOpenAbout,
+  onOpenSync,
   updateReady,
 }) {
   const fileInput = useRef(null);
@@ -97,6 +98,33 @@ export default function Library({
         <div className="screen-head-row">
           <h1>Library</h1>
           <div className="head-actions">
+            <button
+              type="button"
+              className="icon-btn icon-btn-bare"
+              onClick={onOpenSync}
+              aria-label="Sync across devices"
+              title="Sync across devices"
+            >
+              <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true">
+                <path
+                  d="M4.6 11.4a7.4 7.4 0 0 1 12.6-4.5l2 2M19.4 12.6a7.4 7.4 0 0 1-12.6 4.5l-2-2"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M19.6 4.6v4.6H15M4.4 19.4v-4.6H9"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+
             <button
               type="button"
               className={updateReady ? 'icon-btn icon-btn-bare has-badge' : 'icon-btn icon-btn-bare'}

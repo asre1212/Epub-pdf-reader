@@ -3,10 +3,15 @@
 An offline-first progressive web app for reading EPUB and PDF books, highlighting
 as you go, and keeping every highlight from every book in one notebook.
 
-Everything lives on the device. There is no account, no server, and no upload:
+Everything lives on the device. There is no account and nothing is uploaded:
 books, highlights and reading positions are stored in IndexedDB, and the app
 shell plus both rendering engines are precached so the whole thing works with the
 network off.
+
+The one exception is opt-in: if you turn on [sync](#sync), positions and
+highlights are copied between your own devices through a Cloudflare Worker you
+deploy yourself — encrypted on the device first, so even that server cannot read
+them. Book files are never uploaded either way.
 
 ## What it does
 
@@ -21,6 +26,17 @@ a file you already have is detected by content hash rather than duplicated.
 saves the highlight. Tap an existing highlight to recolour it, attach a note, copy
 it, or remove it. The contents drawer lists both the table of contents and the
 highlights you have made in the book so far.
+
+**Highlighter mode** — the pen button in the reader bar. Turn it on and drag a
+finger across text: the passage highlights as you go, snapped to whole words, in
+whichever colour the strip below the bar has selected. No long press, no
+selection handles. Taps still turn the page while it is on, and scrolling is
+suspended so a drag is never mistaken for a scroll — press *Done*, or Escape, to
+go back to normal. It works in both EPUBs and PDFs.
+
+Page turns slide and fade rather than cutting; *Animate page turns* in settings
+turns that off, and it is skipped anyway when the system asks for reduced
+motion.
 
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,
 typeface, letter spacing, justification, page margin, and how pages scroll:
@@ -48,6 +64,16 @@ show, in the order shown:
   in the library yet is listed as *notes only*; import that file later and its
   highlights reattach to it automatically.
 
+**Sync across devices** — the sync button in the library header. Keeps your
+place in each book and your highlights in step between a phone and a tablet.
+Everything is encrypted on the device before it leaves, so the server only ever
+holds scrambled text; it cannot see your books, your notes, or how far through
+you are. Book files are not uploaded — the same file on both devices is matched
+by the content hash the app already computes at import, so positions line up on
+their own. Set it up on the device that has your reading history, then enter its
+code on the other one. It needs the Worker in `worker/` deployed to your own
+Cloudflare account; see [worker/README.md](worker/README.md).
+
 **Updates** — the ⓘ button in the library header opens About, which shows the
 running version and a *Check for updates* / *Update now* pair. Updates also
 install on their own: the app checks on launch, hourly, whenever you return to
@@ -69,6 +95,29 @@ npm run preview    # serve the production build
 
 A service worker only registers over HTTPS or on `localhost`, so use `npm run
 preview` (or a real HTTPS host) to exercise installation and offline behaviour.
+
+## Deploying
+
+`.github/workflows/deploy.yml` builds the app and publishes `dist/` to GitHub
+Pages on every push to `main` or the feature branch, and can be run by hand from
+the Actions tab.
+
+**The repository's Pages source must be set to "GitHub Actions"** — Settings →
+Pages → Build and deployment → Source. Pointing Pages at a branch instead serves
+the repository as-is, and `index.html` loads `/src/main.jsx`, which only exists
+as JSX for Vite to compile; the result is a blank page.
+
+The build needs no base-path configuration for a project site served from a
+repository subpath. Vite is configured with `base: './'`, so
+every asset reference, the manifest's `start_url` and `scope`, the service worker
+scope, and the pdf.js runtime asset lookups are all relative to wherever
+`index.html` lands.
+
+One caveat specific to Pages: it serves HTML with `Cache-Control: max-age=600`
+and does not let you change response headers, so a new version can take up to ten
+minutes to be noticed. On a host you control, serve `index.html`, `sw.js` and
+`manifest.webmanifest` with `Cache-Control: no-cache` for immediate updates; the
+hashed files under `assets/` can be cached forever either way.
 
 ### Installing
 
@@ -112,11 +161,35 @@ if Playwright has not downloaded a browser of its own.
 | `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
+| `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |
 | `src/lib/backup.js` | Building, parsing and merging notes backups |
+| `src/lib/sync.js` / `syncCrypto.js` | Cross-device sync: key derivation, encryption, and the push/pull round |
+| `worker/` | The Cloudflare Worker and D1 schema behind sync |
 | `src/lib/printNotes.js` / `components/NotesPrintSheet.jsx` | The PDF export: a print-only rendition of the notepad |
 | `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
 | `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
 | `src/sw.js` | Precaching, offline navigation, the skip-waiting handler, and the Web Share Target |
+| `.github/workflows/deploy.yml` | Builds and publishes the site to GitHub Pages |
+
+### Highlighter mode
+
+Touch text selection is the weak point of highlighting in a reader. On iOS it
+means a long press, a magnifier and two drag handles, and inside epub.js's
+sandboxed iframe the selection events that go with it are unreliable — which is
+why highlighting EPUBs on an iPad did not work.
+
+`dragHighlight.js` does not use the native selection at all. It hit-tests a caret
+position under the finger on the way down and again on every move
+(`caretRangeFromPoint`, falling back to `caretPositionFromPoint`), builds the
+Range itself, and grows it out to whole words. That behaves the same in every
+engine. While the mode is on, the content gets `user-select: none`,
+`touch-action: none` and `-webkit-touch-callout: none` so nothing competes for
+the gesture; a press that never moves is reported separately and still turns the
+page.
+
+The EPUB view converts the finished Range to a CFI with `contents.cfiFromRange`,
+and the PDF view converts it to page-relative rectangles — so a dragged highlight
+is stored exactly like a selected one.
 
 ### Anchoring highlights
 
@@ -153,6 +226,29 @@ book that has no file attaches to that book instead of creating a second one.
 Merges are idempotent. A highlight is considered already present if its id is
 known, or if the same text is anchored at the same CFI or page in the same book.
 
+### Sync
+
+`worker/` is a Cloudflare Worker over D1 that stores encrypted records for an
+account id. It is deliberately incapable of reading them: the device derives
+both an account id and an AES-GCM key from one sync code with HKDF, sends only
+the id, and encrypts every payload before it leaves. There are no accounts and
+no secrets in the Worker — the sync code is the whole credential, so it is 125
+bits of randomness.
+
+The part that makes it work is what records are keyed by. A book's local id is a
+UUID minted at import, so the same EPUB has different ids on a phone and a
+tablet; keying by it would sync nothing useful. Records are keyed by the book's
+**content fingerprint** instead, which both devices compute identically. A
+highlight also carries its book's title and author, so a device that has not
+imported that book yet still keeps the note — as a *notes only* entry that a
+later import adopts, exactly like a restored backup.
+
+Conflicts are last-write-wins on the device clock, enforced server-side, so a
+device that was offline for a week cannot overwrite something newer when it
+reconnects. Pulls use a per-account sequence number rather than a clock, so no
+record is missed or repeated. Deletions travel as tombstones — without them a
+delete on one device is simply undone by the next sync from the other.
+
 ### Updates
 
 The worker is registered in *prompt* mode, so a new build installs and then
@@ -162,10 +258,6 @@ directly (so a version found by the browser or another tab counts too), posts
 `SKIP_WAITING`, and reloads on `controllerchange`. Because the reload is driven
 from the app rather than from the registration helper, it behaves the same
 however the update was discovered.
-
-Deployments must serve `index.html`, `sw.js` and `manifest.webmanifest` with
-`Cache-Control: no-cache`; the hashed files under `assets/` can be cached
-forever.
 
 ### Offline
 

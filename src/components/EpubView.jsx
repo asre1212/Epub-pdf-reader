@@ -3,11 +3,16 @@ import ePub, { EpubCFI } from 'epubjs';
 import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { colorHex } from '../lib/highlightColors.js';
+import { HIGHLIGHTER_CSS, attachDragHighlighter } from '../lib/dragHighlight.js';
 import { FONT_STACKS, THEMES } from '../lib/settings.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
 const HIGHLIGHT_CLASS = 'marginalia-hl';
 const SWIPE_MIN = 45;
+const STYLE_ID = 'marginalia-highlighter-mode';
+// The page-turn animation swaps content at its midpoint, while it is faded out.
+const TURN_MS = 260;
+const TURN_SWAP_MS = 115;
 
 function flatten(items, depth = 0, out = []) {
   for (const item of items || []) {
@@ -89,6 +94,7 @@ const EpubView = forwardRef(function EpubView(
     onProgress,
     onMeta,
     onToggleChrome,
+    highlighterOn,
     notify,
   },
   ref,
@@ -105,6 +111,12 @@ const EpubView = forwardRef(function EpubView(
   const menuOpenRef = useRef(false);
   const settingsRef = useRef(settings);
   const touchRef = useRef(null);
+  const highlighterRef = useRef(highlighterOn);
+  // contents.document -> detach function for its drag listener
+  const dragDetachRef = useRef(new Map());
+  const turningRef = useRef(false);
+  const [turn, setTurn] = useState(null);
+  const [preview, setPreview] = useState(null);
 
   const [status, setStatus] = useState('loading');
   const [menu, setMenu] = useState(null);
@@ -113,6 +125,7 @@ const EpubView = forwardRef(function EpubView(
   highlightsRef.current = highlights;
   settingsRef.current = settings;
   menuOpenRef.current = !!menu;
+  highlighterRef.current = highlighterOn;
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -205,6 +218,43 @@ const EpubView = forwardRef(function EpubView(
     [book.id, chapterFor, onMeta, onProgress],
   );
 
+  /**
+   * Turns the page with a slide-and-fade. epub.js swaps columns instantly, so
+   * the animation runs on the host element and the swap is timed to land at its
+   * midpoint, while the text is faded out.
+   */
+  const turnPage = useCallback(
+    async (direction) => {
+      const rendition = renditionRef.current;
+      if (!rendition || turningRef.current) return;
+      const go = () => (direction === 'next' ? rendition.next() : rendition.prev());
+
+      const animate =
+        settingsRef.current.pageAnimation !== false &&
+        settingsRef.current.flow === 'paginated' &&
+        !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+      if (!animate) {
+        await go().catch(() => {});
+        return;
+      }
+
+      turningRef.current = true;
+      closeMenu();
+      setTurn(direction);
+      const swapped = new Promise((resolve) => setTimeout(resolve, TURN_SWAP_MS));
+      try {
+        await swapped;
+        await go().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, TURN_MS - TURN_SWAP_MS));
+      } finally {
+        setTurn(null);
+        turningRef.current = false;
+      }
+    },
+    [closeMenu],
+  );
+
   const handleTap = useCallback(
     (clientX) => {
       const rendition = renditionRef.current;
@@ -214,11 +264,11 @@ const EpubView = forwardRef(function EpubView(
         return;
       }
       const width = window.innerWidth;
-      if (clientX < width * 0.28) rendition.prev();
-      else if (clientX > width * 0.72) rendition.next();
+      if (clientX < width * 0.28) turnPage('prev');
+      else if (clientX > width * 0.72) turnPage('next');
       else onToggleChrome();
     },
-    [onToggleChrome],
+    [onToggleChrome, turnPage],
   );
 
   const flashHighlight = useCallback((id) => {
@@ -226,6 +276,126 @@ const EpubView = forwardRef(function EpubView(
     if (!highlight || !renditionRef.current) return;
     renditionRef.current.display(highlight.cfi).catch(() => {});
   }, []);
+
+  /* ------------------------------------------------------------- highlighter */
+
+  /** Saves a highlight from a CFI range, wherever the range came from. */
+  const saveHighlight = useCallback(
+    ({ cfiRange, text, href, color, note = '' }) => {
+      const epubBook = bookRef.current;
+      return onCreateHighlight({
+        bookId: book.id,
+        format: 'epub',
+        cfi: cfiRange,
+        text,
+        note,
+        color,
+        chapter: chapterFor(href || renditionRef.current?.currentLocation()?.start?.href),
+        order: readingOrder(epubBook, cfiRange),
+        createdAt: Date.now(),
+      });
+    },
+    [book.id, chapterFor, onCreateHighlight],
+  );
+
+  /**
+   * Turns highlighter mode on or off for one rendered section: suppresses the
+   * native selection inside it and listens for drags across its text.
+   */
+  const setContentsMode = useCallback(
+    (contents, on) => {
+      const doc = contents?.document;
+      if (!doc) return;
+      const detachers = dragDetachRef.current;
+
+      if (!on) {
+        doc.getElementById(STYLE_ID)?.remove();
+        detachers.get(doc)?.();
+        detachers.delete(doc);
+        return;
+      }
+
+      if (!doc.getElementById(STYLE_ID)) {
+        const style = doc.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = HIGHLIGHTER_CSS;
+        doc.head?.appendChild(style);
+      }
+      if (detachers.has(doc)) return;
+
+      const frameRect = () => {
+        const frame = doc.defaultView?.frameElement;
+        return frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+      };
+
+      detachers.set(
+        doc,
+        attachDragHighlighter({
+          doc,
+          isEnabled: () => highlighterRef.current,
+          onPreview: (rects) => {
+            if (!rects) {
+              setPreview(null);
+              return;
+            }
+            const offset = frameRect();
+            setPreview({
+              color: colorHex(settingsRef.current.defaultColor),
+              rects: rects.map((r) => ({
+                left: offset.left + r.left,
+                top: offset.top + r.top,
+                width: r.width,
+                height: r.height,
+              })),
+            });
+          },
+          onCommit: ({ range, text }) => {
+            try {
+              const cfiRange = contents.cfiFromRange(range);
+              if (!cfiRange) return;
+              // href is left out: saveHighlight falls back to the location on
+              // screen, which is the section this drag happened in.
+              saveHighlight({ cfiRange, text, color: settingsRef.current.defaultColor });
+            } catch (err) {
+              console.warn('Could not anchor that highlight', err);
+              notify('That passage could not be highlighted.', 'error');
+            }
+          },
+          // A press that never moved is still a page turn or a chrome toggle.
+          onTap: (x) => {
+            const offset = frameRect();
+            handleTap(x + offset.left);
+          },
+        }),
+      );
+    },
+    [handleTap, notify, saveHighlight],
+  );
+
+  const applyMode = useCallback(
+    (on) => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      for (const contents of rendition.getContents() || []) setContentsMode(contents, on);
+    },
+    [setContentsMode],
+  );
+
+  // Sections load and unload as the reader moves, so the mode is re-applied to
+  // whatever is on screen rather than set once.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    applyMode(highlighterOn);
+    if (!highlighterOn) setPreview(null);
+  }, [highlighterOn, status, applyMode]);
+
+  useEffect(
+    () => () => {
+      for (const detach of dragDetachRef.current.values()) detach();
+      dragDetachRef.current.clear();
+    },
+    [],
+  );
 
   /* ------------------------------------------------------- book + rendition */
 
@@ -272,6 +442,7 @@ const EpubView = forwardRef(function EpubView(
         rendition.on('rendered', () => {
           drawnRef.current.clear();
           paintHighlights(true);
+          applyMode(highlighterRef.current);
           const pending = pendingFocusRef.current;
           if (pending) {
             pendingFocusRef.current = null;
@@ -309,8 +480,7 @@ const EpubView = forwardRef(function EpubView(
           const dy = touch.clientY - start.y;
           if (Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 1.4) {
             if (contentsHasSelection(event)) return;
-            if (dx < 0) rendition.next();
-            else rendition.prev();
+            turnPage(dx < 0 ? 'next' : 'prev');
           }
         });
 
@@ -327,8 +497,8 @@ const EpubView = forwardRef(function EpubView(
         });
 
         rendition.on('keyup', (event) => {
-          if (event.key === 'ArrowRight' || event.key === 'PageDown') rendition.next();
-          if (event.key === 'ArrowLeft' || event.key === 'PageUp') rendition.prev();
+          if (event.key === 'ArrowRight' || event.key === 'PageDown') turnPage('next');
+          if (event.key === 'ArrowLeft' || event.key === 'PageUp') turnPage('prev');
         });
 
         await rendition.display(locationRef.current || undefined);
@@ -457,12 +627,12 @@ const EpubView = forwardRef(function EpubView(
   useImperativeHandle(
     ref,
     () => ({
-      next: () => renditionRef.current?.next(),
-      prev: () => renditionRef.current?.prev(),
+      next: () => turnPage('next'),
+      prev: () => turnPage('prev'),
       goTo: (target) => renditionRef.current?.display(target).catch(() => {}),
       goToHighlight: flashHighlight,
     }),
-    [flashHighlight],
+    [flashHighlight, turnPage],
   );
 
   /* ----------------------------------------------------------------- create */
@@ -470,32 +640,49 @@ const EpubView = forwardRef(function EpubView(
   const createHighlight = useCallback(
     async (colorId, note = '') => {
       if (!menu || menu.mode !== 'create') return null;
-      const epubBook = bookRef.current;
-      const order = readingOrder(epubBook, menu.cfiRange);
-      const record = {
-        bookId: book.id,
-        format: 'epub',
-        cfi: menu.cfiRange,
-        text: menu.text,
-        note,
-        color: colorId,
-        chapter: chapterFor(menu.href),
-        order,
-        createdAt: Date.now(),
-      };
       menu.clear?.();
       closeMenu();
-      return onCreateHighlight(record);
+      return saveHighlight({
+        cfiRange: menu.cfiRange,
+        text: menu.text,
+        href: menu.href,
+        color: colorId,
+        note,
+      });
     },
-    [menu, book.id, chapterFor, closeMenu, onCreateHighlight],
+    [menu, closeMenu, saveHighlight],
   );
 
   const menuHighlight =
     menu?.mode === 'edit' ? highlights.find((h) => h.id === menu.id) || null : null;
 
+  const hostClass = ['epub-host', turn ? `is-turning-${turn}` : '']
+    .filter(Boolean)
+    .join(' ');
+
   return (
-    <div className="epub-host-wrap" style={{ padding: `2.5% ${settings.margin}%` }}>
-      <div ref={hostRef} className="epub-host" />
+    <div
+      className={highlighterOn ? 'epub-host-wrap is-highlighting' : 'epub-host-wrap'}
+      style={{ padding: `2.5% ${settings.margin}%` }}
+    >
+      <div ref={hostRef} className={hostClass} />
+
+      {preview && (
+        <div className="drag-preview" aria-hidden="true">
+          {preview.rects.map((rect, index) => (
+            <span
+              key={index}
+              style={{
+                left: `${rect.left}px`,
+                top: `${rect.top}px`,
+                width: `${rect.width}px`,
+                height: `${rect.height}px`,
+                background: preview.color,
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {status === 'loading' && <div className="view-status">Opening book…</div>}
       {status === 'error' && <div className="view-status">This EPUB could not be opened.</div>}

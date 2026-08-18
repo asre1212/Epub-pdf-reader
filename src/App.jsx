@@ -4,6 +4,7 @@ import Library from './components/Library.jsx';
 import Notes from './components/Notes.jsx';
 import Reader from './components/Reader.jsx';
 import Toasts from './components/Toasts.jsx';
+import SyncSheet from './components/SyncSheet.jsx';
 import UpdateBanner from './components/UpdateBanner.jsx';
 import {
   applyUpdate,
@@ -23,6 +24,7 @@ import {
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
 import { restoreBackup } from './lib/backup.js';
+import { getSyncConfig, syncNow } from './lib/sync.js';
 import { importFiles } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
 import { drainSharedFiles } from './lib/shareInbox.js';
@@ -38,9 +40,12 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [showAbout, setShowAbout] = useState(false);
+  const [showSync, setShowSync] = useState(false);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [usage, setUsage] = useState(null);
   const toastId = useRef(0);
+  const syncTimer = useRef(null);
+  const lastSyncAttempt = useRef(0);
   const update = useUpdateState();
 
   const notify = useCallback((message, tone = 'info') => {
@@ -231,31 +236,88 @@ export default function App() {
   );
 
   const patchBook = useCallback(async (id, patch) => {
-    setBooks((list) => list?.map((b) => (b.id === id ? { ...b, ...patch } : b)) ?? list);
+    // Stamp position changes so sync can tell which device moved last.
+    const moved = 'location' in patch || 'progress' in patch;
+    const next = moved ? { ...patch, positionAt: Date.now() } : patch;
+    setBooks((list) => list?.map((b) => (b.id === id ? { ...b, ...next } : b)) ?? list);
     setReading((current) =>
-      current && current.book.id === id ? { ...current, book: { ...current.book, ...patch } } : current,
+      current && current.book.id === id ? { ...current, book: { ...current.book, ...next } } : current,
     );
-    await updateBook(id, patch);
+    await updateBook(id, next);
   }, []);
+
+  /* ------------------------------------------------------------------ sync */
+
+  const refreshAll = useCallback(
+    () => Promise.all([refreshBooks(), refreshHighlights()]),
+    [refreshBooks, refreshHighlights],
+  );
+
+  const runSync = useCallback(
+    async ({ force = false } = {}) => {
+      const config = await getSyncConfig();
+      if (!config.enabled) return;
+      lastSyncAttempt.current = Date.now();
+      const result = await syncNow({ force });
+      if (result?.applied) await refreshAll();
+    },
+    [refreshAll],
+  );
+
+  /** Local edits settle for a moment before being pushed, so a burst is one round. */
+  const scheduleSync = useCallback(() => {
+    clearTimeout(syncTimer.current);
+    syncTimer.current = setTimeout(() => runSync(), 4000);
+  }, [runSync]);
+
+  useEffect(() => {
+    if (!settingsReady) return undefined;
+    runSync();
+
+    const onVisible = () => {
+      // Coming back to the app is the moment the other device's position matters.
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastSyncAttempt.current < 30000) return;
+      runSync();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', () => runSync({ force: true }));
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      clearTimeout(syncTimer.current);
+    };
+  }, [settingsReady, runSync]);
 
   /* ------------------------------------------------------- highlight state */
 
-  const addHighlight = useCallback(async (highlight) => {
-    await putHighlight(highlight);
-    setHighlights((list) => [...list, highlight]);
-    return highlight;
-  }, []);
+  const addHighlight = useCallback(
+    async (highlight) => {
+      const saved = await putHighlight(highlight);
+      setHighlights((list) => [...list, saved]);
+      scheduleSync();
+      return saved;
+    },
+    [scheduleSync],
+  );
 
-  const editHighlight = useCallback(async (id, patch) => {
-    const next = await dbUpdateHighlight(id, patch);
-    if (next) setHighlights((list) => list.map((h) => (h.id === id ? next : h)));
-    return next;
-  }, []);
+  const editHighlight = useCallback(
+    async (id, patch) => {
+      const next = await dbUpdateHighlight(id, patch);
+      if (next) setHighlights((list) => list.map((h) => (h.id === id ? next : h)));
+      scheduleSync();
+      return next;
+    },
+    [scheduleSync],
+  );
 
-  const removeHighlight = useCallback(async (id) => {
-    await dbDeleteHighlight(id);
-    setHighlights((list) => list.filter((h) => h.id !== id));
-  }, []);
+  const removeHighlight = useCallback(
+    async (id) => {
+      await dbDeleteHighlight(id);
+      setHighlights((list) => list.filter((h) => h.id !== id));
+      scheduleSync();
+    },
+    [scheduleSync],
+  );
 
   const handleRestoreBackup = useCallback(
     async (file) => {
@@ -303,6 +365,7 @@ export default function App() {
                 onDelete={removeBook}
                 onRename={(book, title) => patchBook(book.id, { title })}
                 onOpenAbout={() => setShowAbout(true)}
+                onOpenSync={() => setShowSync(true)}
                 updateReady={update.needRefresh}
               />
             ) : (
@@ -375,6 +438,14 @@ export default function App() {
           onUpdate={applyUpdate}
           onToggleAuto={setAutoUpdate}
           onClose={() => setShowAbout(false)}
+        />
+      )}
+
+      {showSync && (
+        <SyncSheet
+          notify={notify}
+          onSynced={refreshAll}
+          onClose={() => setShowSync(false)}
         />
       )}
 

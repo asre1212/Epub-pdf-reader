@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'marginalia';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /**
  * Object stores:
@@ -10,6 +10,9 @@ const DB_VERSION = 1;
  *                library list can be read without pulling megabytes into memory
  *   highlights — every highlight, indexed by book
  *   prefs      — reader settings and other small key/value state
+ *   tombstones — ids of deleted highlights, so a deletion can be synced. Without
+ *                them a delete on one device is undone by the next sync from the
+ *                other, which still has the highlight.
  */
 let dbPromise;
 
@@ -32,6 +35,10 @@ function getDB() {
         }
         if (!db.objectStoreNames.contains('prefs')) {
           db.createObjectStore('prefs');
+        }
+        if (!db.objectStoreNames.contains('tombstones')) {
+          const graves = db.createObjectStore('tombstones', { keyPath: 'id' });
+          graves.createIndex('deletedAt', 'deletedAt');
         }
       },
     });
@@ -96,11 +103,14 @@ export async function hasBookFile(id) {
 /** Removes a book together with its file and every highlight in it. */
 export async function deleteBook(id) {
   const db = await getDB();
-  const tx = db.transaction(['books', 'files', 'highlights'], 'readwrite');
+  const tx = db.transaction(['books', 'files', 'highlights', 'tombstones'], 'readwrite');
   tx.objectStore('books').delete(id);
   tx.objectStore('files').delete(id);
   const index = tx.objectStore('highlights').index('bookId');
+  const graves = tx.objectStore('tombstones');
+  const now = Date.now();
   for await (const cursor of index.iterate(IDBKeyRange.only(id))) {
+    graves.put({ id: cursor.value.id, bookId: id, deletedAt: now });
     cursor.delete();
   }
   await tx.done;
@@ -122,8 +132,9 @@ export async function listHighlights(bookId) {
 }
 
 export async function putHighlight(highlight) {
-  await (await getDB()).put('highlights', highlight);
-  return highlight;
+  const record = { updatedAt: highlight.createdAt ?? Date.now(), ...highlight };
+  await (await getDB()).put('highlights', record);
+  return record;
 }
 
 export async function updateHighlight(id, patch) {
@@ -140,8 +151,37 @@ export async function updateHighlight(id, patch) {
   return next;
 }
 
-export async function deleteHighlight(id) {
-  await (await getDB()).delete('highlights', id);
+/**
+ * Removes a highlight and remembers that it was removed. `remote` deletions come
+ * from another device, which already knows, so they leave no tombstone.
+ */
+export async function deleteHighlight(id, { remote = false } = {}) {
+  const db = await getDB();
+  const tx = db.transaction(['highlights', 'tombstones'], 'readwrite');
+  const existing = await tx.objectStore('highlights').get(id);
+  tx.objectStore('highlights').delete(id);
+  if (!remote) {
+    tx.objectStore('tombstones').put({
+      id,
+      bookId: existing?.bookId ?? null,
+      deletedAt: Date.now(),
+    });
+  }
+  await tx.done;
+}
+
+export async function listTombstones() {
+  return (await getDB()).getAll('tombstones');
+}
+
+/** Tombstones only exist to be synced; drop them once every device has seen one. */
+export async function pruneTombstones(before) {
+  const db = await getDB();
+  const tx = db.transaction('tombstones', 'readwrite');
+  for await (const cursor of tx.store.index('deletedAt').iterate(IDBKeyRange.upperBound(before))) {
+    cursor.delete();
+  }
+  await tx.done;
 }
 
 /* ------------------------------------------------------------------- prefs */

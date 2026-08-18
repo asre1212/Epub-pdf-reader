@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dev-dist/
+
+# Copied from pdfjs-dist at build time by scripts/copy-pdfjs-assets.mjs
+public/pdfjs/
+
+.DS_Store
+*.local

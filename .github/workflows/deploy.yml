@@ -1,0 +1,65 @@
+# Builds the app and publishes dist/ to GitHub Pages.
+#
+# Pages cannot serve this repository directly: index.html loads /src/main.jsx,
+# which only exists as JSX for Vite to compile. Without this build step the site
+# is a blank page.
+#
+# The repository's Pages source must be set to "GitHub Actions"
+# (Settings -> Pages -> Build and deployment -> Source).
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - claude/epub-pdf-reader-pwa-tumn2g
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let a newer commit supersede an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Also copies the pdf.js runtime assets into public/ via the prebuild hook.
+      - name: Build
+        run: npm run build
+
+      - name: Skip Jekyll processing
+        run: touch dist/.nojekyll
+
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

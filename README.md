@@ -70,6 +70,29 @@ npm run preview    # serve the production build
 A service worker only registers over HTTPS or on `localhost`, so use `npm run
 preview` (or a real HTTPS host) to exercise installation and offline behaviour.
 
+## Deploying
+
+`.github/workflows/deploy.yml` builds the app and publishes `dist/` to GitHub
+Pages on every push to `main` or the feature branch, and can be run by hand from
+the Actions tab.
+
+**The repository's Pages source must be set to "GitHub Actions"** — Settings →
+Pages → Build and deployment → Source. Pointing Pages at a branch instead serves
+the repository as-is, and `index.html` loads `/src/main.jsx`, which only exists
+as JSX for Vite to compile; the result is a blank page.
+
+The build needs no base-path configuration for a project site served from a
+repository subpath. Vite is configured with `base: './'`, so
+every asset reference, the manifest's `start_url` and `scope`, the service worker
+scope, and the pdf.js runtime asset lookups are all relative to wherever
+`index.html` lands.
+
+One caveat specific to Pages: it serves HTML with `Cache-Control: max-age=600`
+and does not let you change response headers, so a new version can take up to ten
+minutes to be noticed. On a host you control, serve `index.html`, `sw.js` and
+`manifest.webmanifest` with `Cache-Control: no-cache` for immediate updates; the
+hashed files under `assets/` can be cached forever either way.
+
 ### Installing
 
 Open the built app in a browser and use *Install app* / *Add to Home Screen*.
@@ -117,6 +140,7 @@ if Playwright has not downloaded a browser of its own.
 | `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
 | `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
 | `src/sw.js` | Precaching, offline navigation, the skip-waiting handler, and the Web Share Target |
+| `.github/workflows/deploy.yml` | Builds and publishes the site to GitHub Pages |
 
 ### Anchoring highlights
 
@@ -162,10 +186,6 @@ directly (so a version found by the browser or another tab counts too), posts
 `SKIP_WAITING`, and reloads on `controllerchange`. Because the reload is driven
 from the app rather than from the registration helper, it behaves the same
 however the update was discovered.
-
-Deployments must serve `index.html`, `sw.js` and `manifest.webmanifest` with
-`Cache-Control: no-cache`; the hashed files under `assets/` can be cached
-forever.
 
 ### Offline
 

@@ -1827,6 +1827,38 @@ button {
   100% { transform: translateX(0); opacity: 1; }
 }
 
+/* ------------------------------------------------------------------- sync */
+
+.synccode {
+  margin: 4px 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  word-break: break-all;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.synccode-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  width: 100%;
+}
+
+.sheet .field {
+  width: 100%;
+}
+
+.set-row code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-2);
+}
+
 /* ------------------------------------------------------------- wider views */
 
 @media (min-width: 760px) {

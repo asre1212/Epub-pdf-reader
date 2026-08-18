@@ -1,0 +1,17 @@
+{
+  "name": "marginalia-sync-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create marginalia-sync",
+    "db:init": "wrangler d1 execute marginalia-sync --remote --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute marginalia-sync --local --file=./schema.sql",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

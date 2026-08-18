@@ -59,6 +59,16 @@ show, in the order shown:
   in the library yet is listed as *notes only*; import that file later and its
   highlights reattach to it automatically.
 
+**Sync across devices** — the sync button in the library header. Keeps your
+place in each book and your highlights in step between a phone and a tablet.
+Everything is encrypted on the device before it leaves, so the server only ever
+holds scrambled text; it cannot see your books, your notes, or how far through
+you are. Book files are not uploaded — the same file on both devices is matched
+by the content hash the app already computes at import, so positions line up on
+their own. Set it up on the device that has your reading history, then enter its
+code on the other one. It needs the Worker in `worker/` deployed to your own
+Cloudflare account; see [worker/README.md](worker/README.md).
+
 **Updates** — the ⓘ button in the library header opens About, which shows the
 running version and a *Check for updates* / *Update now* pair. Updates also
 install on their own: the app checks on launch, hourly, whenever you return to
@@ -148,6 +158,8 @@ if Playwright has not downloaded a browser of its own.
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
 | `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |
 | `src/lib/backup.js` | Building, parsing and merging notes backups |
+| `src/lib/sync.js` / `syncCrypto.js` | Cross-device sync: key derivation, encryption, and the push/pull round |
+| `worker/` | The Cloudflare Worker and D1 schema behind sync |
 | `src/lib/printNotes.js` / `components/NotesPrintSheet.jsx` | The PDF export: a print-only rendition of the notepad |
 | `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
 | `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
@@ -208,6 +220,29 @@ book that has no file attaches to that book instead of creating a second one.
 
 Merges are idempotent. A highlight is considered already present if its id is
 known, or if the same text is anchored at the same CFI or page in the same book.
+
+### Sync
+
+`worker/` is a Cloudflare Worker over D1 that stores encrypted records for an
+account id. It is deliberately incapable of reading them: the device derives
+both an account id and an AES-GCM key from one sync code with HKDF, sends only
+the id, and encrypts every payload before it leaves. There are no accounts and
+no secrets in the Worker — the sync code is the whole credential, so it is 125
+bits of randomness.
+
+The part that makes it work is what records are keyed by. A book's local id is a
+UUID minted at import, so the same EPUB has different ids on a phone and a
+tablet; keying by it would sync nothing useful. Records are keyed by the book's
+**content fingerprint** instead, which both devices compute identically. A
+highlight also carries its book's title and author, so a device that has not
+imported that book yet still keeps the note — as a *notes only* entry that a
+later import adopts, exactly like a restored backup.
+
+Conflicts are last-write-wins on the device clock, enforced server-side, so a
+device that was offline for a week cannot overwrite something newer when it
+reconnects. Pulls use a per-account sequence number rather than a clock, so no
+record is missed or repeated. Deletions travel as tombstones — without them a
+delete on one device is simply undone by the next sync from the other.
 
 ### Updates
 

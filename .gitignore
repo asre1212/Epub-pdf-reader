@@ -7,3 +7,8 @@ public/pdfjs/
 
 .DS_Store
 *.local
+
+# Cloudflare Worker
+worker/node_modules/
+worker/.wrangler/
+worker/wrangler.dev.toml

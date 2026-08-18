@@ -3,10 +3,15 @@
 An offline-first progressive web app for reading EPUB and PDF books, highlighting
 as you go, and keeping every highlight from every book in one notebook.
 
-Everything lives on the device. There is no account, no server, and no upload:
+Everything lives on the device. There is no account and nothing is uploaded:
 books, highlights and reading positions are stored in IndexedDB, and the app
 shell plus both rendering engines are precached so the whole thing works with the
 network off.
+
+The one exception is opt-in: if you turn on [sync](#sync), positions and
+highlights are copied between your own devices through a Cloudflare Worker you
+deploy yourself — encrypted on the device first, so even that server cannot read
+them. Book files are never uploaded either way.
 
 ## What it does
 

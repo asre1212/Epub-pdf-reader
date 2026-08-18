@@ -366,6 +366,8 @@ const EpubView = forwardRef(function EpubView(
             const offset = frameRect();
             handleTap(x + offset.left);
           },
+          // Never fail silently: a drag that caught no text should say so.
+          onMiss: () => notify('No text under that drag — try across a line.'),
         }),
       );
     },

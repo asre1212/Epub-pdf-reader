@@ -179,13 +179,27 @@ sandboxed iframe the selection events that go with it are unreliable — which i
 why highlighting EPUBs on an iPad did not work.
 
 `dragHighlight.js` does not use the native selection at all. It hit-tests a caret
-position under the finger on the way down and again on every move
-(`caretRangeFromPoint`, falling back to `caretPositionFromPoint`), builds the
-Range itself, and grows it out to whole words. That behaves the same in every
-engine. While the mode is on, the content gets `user-select: none`,
-`touch-action: none` and `-webkit-touch-callout: none` so nothing competes for
-the gesture; a press that never moves is reported separately and still turns the
-page.
+position under the finger on the way down and again on every move, builds the
+Range itself, and grows it out to whole words. A press that never moves is
+reported separately and still turns the page.
+
+Two details exist specifically because of WebKit, and both were found the hard
+way on an actual iPhone:
+
+- **The content is not made unselectable.** The obvious way to stop iOS showing
+  its magnifier and selection handles is `user-select: none`, but WebKit ties
+  caret hit-testing to selectability: `caretRangeFromPoint` returns null inside
+  unselectable text, so the whole gesture silently does nothing. Chromium does
+  not care, which is exactly why this was easy to get wrong. iOS's selection UI
+  is held off by preventing the default on the touch instead.
+- **The gesture is tracked with Touch events, not Pointer events**, which have a
+  patchy history inside iframes on iOS.
+
+There is also a fallback for when the caret APIs refuse regardless: a scan of the
+words inside the element under the finger, picking the nearest one. Word
+granularity keeps it cheap enough to run on every move, and the result is snapped
+to words anyway. `webkit-sim-test` covers this by disabling the caret APIs
+outright and checking a drag still highlights.
 
 The EPUB view converts the finished Range to a CFI with `contents.cfiFromRange`,
 and the PDF view converts it to page-relative rectangles — so a dragged highlight

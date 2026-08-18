@@ -1,9 +1,12 @@
 import ePub from 'epubjs';
 import {
   findBookByFingerprint,
+  hasBookFile,
+  listBooks,
   newId,
   putBook,
   saveBookFile,
+  updateBook,
 } from './db.js';
 import { fingerprintBlob } from './fingerprint.js';
 import { closePdf, openPdf } from './pdf.js';
@@ -95,10 +98,35 @@ async function readEpubMetadata(blob, file) {
   return meta;
 }
 
+function sameTitle(a, b) {
+  return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
+}
+
 /**
- * Turns a picked File into a library record. Returns
- * `{ book, duplicate }` — `duplicate` is true when the same bytes were already
- * imported, in which case the existing book is returned untouched.
+ * A book restored from a notes backup exists as a record with no file. When the
+ * real file turns up, it belongs to that record rather than to a new one, so the
+ * restored highlights are still attached to it.
+ */
+async function findPlaceholder({ fingerprint, title, author, format }) {
+  const books = await listBooks();
+  const candidates = [];
+  for (const book of books) {
+    if (book.format !== format) continue;
+    if (fingerprint && book.fingerprint && book.fingerprint !== fingerprint) continue;
+    if (!(await hasBookFile(book.id))) candidates.push(book);
+  }
+  return (
+    candidates.find((book) => sameTitle(book.title, title) && sameTitle(book.author, author)) ||
+    candidates.find((book) => sameTitle(book.title, title)) ||
+    null
+  );
+}
+
+/**
+ * Turns a picked File into a library record. Returns `{ book, duplicate,
+ * adopted }` — `duplicate` when the same bytes are already in the library,
+ * `adopted` when the file filled in a book that had been restored from a backup
+ * without it.
  */
 export async function importFile(file) {
   const format = detectFormat(file);
@@ -109,10 +137,28 @@ export async function importFile(file) {
   const blob = file instanceof Blob ? file : new Blob([file]);
   const fingerprint = await fingerprintBlob(blob);
   const existing = await findBookByFingerprint(fingerprint);
-  if (existing) return { book: existing, duplicate: true };
+  if (existing && (await hasBookFile(existing.id))) {
+    return { book: existing, duplicate: true };
+  }
 
   const meta =
     format === 'epub' ? await readEpubMetadata(blob, file) : await readPdfMetadata(blob, file);
+
+  const placeholder = existing || (await findPlaceholder({ ...meta, fingerprint, format }));
+  if (placeholder) {
+    await saveBookFile(placeholder.id, blob);
+    const book = await updateBook(placeholder.id, {
+      fingerprint: fingerprint || placeholder.fingerprint || null,
+      size: blob.size,
+      fileName: file.name || placeholder.fileName,
+      cover: placeholder.cover || meta.cover || null,
+      pageCount: placeholder.pageCount ?? meta.pageCount ?? null,
+      title: placeholder.title || meta.title,
+      author: placeholder.author || meta.author || '',
+      missingFile: false,
+    });
+    return { book: book || placeholder, duplicate: false, adopted: true };
+  }
 
   const book = {
     id: newId(),
@@ -143,14 +189,17 @@ export async function importFile(file) {
 export async function importFiles(files) {
   const added = [];
   const duplicates = [];
+  const adopted = [];
   const errors = [];
   for (const file of files) {
     try {
-      const { book, duplicate } = await importFile(file);
-      (duplicate ? duplicates : added).push(book);
+      const { book, duplicate, adopted: reattached } = await importFile(file);
+      if (duplicate) duplicates.push(book);
+      else if (reattached) adopted.push(book);
+      else added.push(book);
     } catch (err) {
       errors.push({ name: file.name || 'file', message: err?.message || String(err) });
     }
   }
-  return { added, duplicates, errors };
+  return { added, duplicates, adopted, errors };
 }

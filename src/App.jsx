@@ -1,17 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AboutSheet from './components/AboutSheet.jsx';
 import Library from './components/Library.jsx';
 import Notes from './components/Notes.jsx';
 import Reader from './components/Reader.jsx';
 import Toasts from './components/Toasts.jsx';
+import UpdateBanner from './components/UpdateBanner.jsx';
+import {
+  applyUpdate,
+  checkForUpdate,
+  getUpdateState,
+  setAutoUpdate,
+} from './lib/appUpdates.js';
+import { useUpdateState } from './lib/useUpdateState.js';
 import {
   deleteBook as dbDeleteBook,
   deleteHighlight as dbDeleteHighlight,
+  estimateUsage,
   listBooks,
   listHighlights,
   putHighlight,
   updateBook,
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
+import { restoreBackup } from './lib/backup.js';
 import { importFiles } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
 import { drainSharedFiles } from './lib/shareInbox.js';
@@ -26,7 +37,11 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [showAbout, setShowAbout] = useState(false);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [usage, setUsage] = useState(null);
   const toastId = useRef(0);
+  const update = useUpdateState();
 
   const notify = useCallback((message, tone = 'info') => {
     const id = ++toastId.current;
@@ -56,6 +71,37 @@ export default function App() {
     });
   }, [refreshBooks, refreshHighlights, notify]);
 
+  /* --------------------------------------------------------------- updates */
+
+  // Auto-update waits until nobody is mid-page: a reload during reading is
+  // jarring even though the position is saved. Otherwise the banner offers it.
+  useEffect(() => {
+    if (!update.needRefresh || !update.autoUpdate || update.applying || reading) return undefined;
+    notify('Installing the latest version…');
+    const timer = setTimeout(applyUpdate, 1200);
+    return () => clearTimeout(timer);
+  }, [update.needRefresh, update.autoUpdate, update.applying, reading, notify]);
+
+  useEffect(() => {
+    if (update.needRefresh) setUpdateDismissed(false);
+  }, [update.needRefresh]);
+
+  useEffect(() => {
+    if (update.firstInstall) notify('Ready to read offline', 'success');
+  }, [update.firstInstall, notify]);
+
+  const runCheck = useCallback(async () => {
+    const found = await checkForUpdate();
+    if (found) return;
+    // Read straight from the store: this callback's snapshot predates the check.
+    const { error } = getUpdateState();
+    notify(error || 'You are running the latest version', error ? 'error' : 'success');
+  }, [notify]);
+
+  useEffect(() => {
+    if (showAbout) estimateUsage().then(setUsage);
+  }, [showAbout, books]);
+
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
       const next = typeof patch === 'function' ? patch(prev) : { ...prev, ...patch };
@@ -72,11 +118,20 @@ export default function App() {
       if (!files.length) return;
       setImporting(true);
       try {
-        const { added, duplicates, errors } = await importFiles(files);
+        const { added, duplicates, adopted, errors } = await importFiles(files);
         await refreshBooks();
         if (added.length) {
           notify(
             added.length === 1 ? `Added “${added[0].title}”` : `Added ${added.length} books`,
+            'success',
+          );
+        }
+        if (adopted.length) {
+          // These books came back from a notes backup without their files.
+          notify(
+            adopted.length === 1
+              ? `Reunited “${adopted[0].title}” with its highlights`
+              : `Reunited ${adopted.length} books with their highlights`,
             'success',
           );
         }
@@ -202,6 +257,15 @@ export default function App() {
     setHighlights((list) => list.filter((h) => h.id !== id));
   }, []);
 
+  const handleRestoreBackup = useCallback(
+    async (file) => {
+      const report = await restoreBackup(file);
+      await Promise.all([refreshBooks(), refreshHighlights()]);
+      return report;
+    },
+    [refreshBooks, refreshHighlights],
+  );
+
   const highlightCounts = useMemo(() => {
     const counts = new Map();
     for (const h of highlights) counts.set(h.bookId, (counts.get(h.bookId) || 0) + 1);
@@ -238,6 +302,8 @@ export default function App() {
                 onOpen={openBook}
                 onDelete={removeBook}
                 onRename={(book, title) => patchBook(book.id, { title })}
+                onOpenAbout={() => setShowAbout(true)}
+                updateReady={update.needRefresh}
               />
             ) : (
               <Notes
@@ -246,10 +312,19 @@ export default function App() {
                 onOpenHighlight={(book, highlight) => openBook(book, highlight.id)}
                 onEditHighlight={editHighlight}
                 onDeleteHighlight={removeHighlight}
+                onRestoreBackup={handleRestoreBackup}
                 notify={notify}
               />
             )}
           </main>
+
+          {update.needRefresh && !updateDismissed && !update.autoUpdate && (
+            <UpdateBanner
+              applying={update.applying}
+              onUpdate={applyUpdate}
+              onDismiss={() => setUpdateDismissed(true)}
+            />
+          )}
 
           <nav className="tabbar" aria-label="Main">
             <button
@@ -289,6 +364,17 @@ export default function App() {
           onDeleteHighlight={removeHighlight}
           onProgress={patchBook}
           notify={notify}
+        />
+      )}
+
+      {showAbout && (
+        <AboutSheet
+          update={update}
+          usage={usage}
+          onCheck={runCheck}
+          onUpdate={applyUpdate}
+          onToggleAuto={setAutoUpdate}
+          onClose={() => setShowAbout(false)}
         />
       )}
 

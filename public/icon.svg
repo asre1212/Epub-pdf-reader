@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Marginalia">
+  <title>Marginalia</title>
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22243a" />
+      <stop offset="0.55" stop-color="#171826" />
+      <stop offset="1" stop-color="#0e0f15" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0.24" cy="0.14" r="0.85">
+      <stop offset="0" stop-color="#7b6cff" stop-opacity="0.4" />
+      <stop offset="1" stop-color="#7b6cff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="leftPage" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#fdf6e6" />
+      <stop offset="1" stop-color="#f2e6cd" />
+    </linearGradient>
+    <linearGradient id="rightPage" x1="1" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#f8eed9" />
+      <stop offset="1" stop-color="#eadcbe" />
+    </linearGradient>
+    <filter id="soften" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="11" />
+    </filter>
+  </defs>
+
+  <!-- Full-bleed background: iOS and Android apply their own corner masks. -->
+  <g id="bg">
+    <rect width="512" height="512" fill="url(#ink)" />
+    <rect width="512" height="512" fill="url(#glow)" />
+  </g>
+
+  <g id="art">
+    <ellipse cx="256" cy="378" rx="172" ry="17" fill="#000" opacity="0.4" filter="url(#soften)" />
+
+    <!-- An open book, spine sitting lower than the outer edges. -->
+    <path
+      d="M256 182 C210 158 140 144 76 150 Q66 151 66 161 L66 332 Q66 342 76 341 C140 336 210 350 256 372 Z"
+      fill="url(#leftPage)"
+    />
+    <path
+      d="M256 182 C302 158 372 144 436 150 Q446 151 446 161 L446 332 Q446 342 436 341 C372 336 302 350 256 372 Z"
+      fill="url(#rightPage)"
+    />
+    <path d="M256 182 L256 372" stroke="#cdb994" stroke-width="5" stroke-linecap="round" opacity="0.9" />
+
+    <!-- The highlighter stroke goes under the ink, and overruns the line a little. -->
+    <rect
+      x="272" y="251" width="154" height="34" rx="9"
+      fill="#ffd54a"
+      transform="rotate(-5.44 349 268)"
+    />
+
+    <g stroke-linecap="round" fill="none">
+      <g stroke="#b7a483" stroke-width="13">
+        <path d="M100 228 L226 240" />
+        <path d="M100 262 L226 274" />
+        <path d="M100 296 L200 306" />
+        <path d="M286 240 L412 228" />
+        <path d="M286 308 L386 298" />
+      </g>
+      <!-- Darker ink where it crosses the highlight. -->
+      <path d="M286 274 L412 262" stroke="#7a6642" stroke-width="13" />
+    </g>
+  </g>
+</svg>

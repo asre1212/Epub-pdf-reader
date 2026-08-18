@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react';
 import HighlightCard from './HighlightCard.jsx';
+import NotesExportSheet from './NotesExportSheet.jsx';
+import NotesPrintSheet from './NotesPrintSheet.jsx';
 import { HIGHLIGHT_COLORS } from '../lib/highlightColors.js';
-import {
-  copyToClipboard,
-  downloadText,
-  highlightsToMarkdown,
-  highlightsToText,
-} from '../lib/exportNotes.js';
+import { copyToClipboard, highlightsToMarkdown } from '../lib/exportNotes.js';
 
 const GROUP_SORTS = [
   { id: 'title', label: 'Book title (A–Z)' },
@@ -20,6 +17,7 @@ export default function Notes({
   onOpenHighlight,
   onEditHighlight,
   onDeleteHighlight,
+  onRestoreBackup,
   notify,
 }) {
   const [query, setQuery] = useState('');
@@ -28,6 +26,7 @@ export default function Notes({
   const [groupSort, setGroupSort] = useState('title');
   const [notesOnly, setNotesOnly] = useState(false);
   const [collapsed, setCollapsed] = useState(() => new Set());
+  const [showExport, setShowExport] = useState(false);
 
   const booksById = useMemo(() => new Map(books.map((b) => [b.id, b])), [books]);
 
@@ -94,36 +93,24 @@ export default function Notes({
     notify(ok ? `Copied ${shown} highlight${shown === 1 ? '' : 's'}` : 'Could not copy', ok ? 'success' : 'error');
   };
 
-  const stamp = new Date().toISOString().slice(0, 10);
+  const isFiltered =
+    !!query.trim() || colorFilter !== 'all' || bookFilter !== 'all' || notesOnly;
 
   return (
     <div className="screen">
       <header className="screen-head">
         <div className="screen-head-row">
           <h1>Notes</h1>
-          {shown > 0 && (
-            <div className="head-actions">
+          <div className="head-actions">
+            {shown > 0 && (
               <button type="button" className="btn" onClick={copyAll}>
                 Copy
               </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() =>
-                  downloadText(`highlights-${stamp}.md`, highlightsToMarkdown(groups), 'text/markdown')
-                }
-              >
-                .md
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => downloadText(`highlights-${stamp}.txt`, highlightsToText(groups))}
-              >
-                .txt
-              </button>
-            </div>
-          )}
+            )}
+            <button type="button" className="btn" onClick={() => setShowExport(true)}>
+              Export
+            </button>
+          </div>
         </div>
 
         {highlights.length > 0 && (
@@ -208,6 +195,13 @@ export default function Notes({
             Open a book, select some text, and pick a colour. Every highlight you make lands here,
             grouped by book, in one notepad you can search, copy, or export.
           </p>
+          <button type="button" className="btn" onClick={() => setShowExport(true)}>
+            Restore from a backup
+          </button>
+          <p className="empty-hint">
+            Coming from another device? Restore the backup you saved there and your highlights come
+            back with it.
+          </p>
         </div>
       )}
 
@@ -267,6 +261,20 @@ export default function Notes({
             );
           })}
         </div>
+      )}
+
+      {shown > 0 && <NotesPrintSheet groups={groups} total={shown} />}
+
+      {showExport && (
+        <NotesExportSheet
+          groups={groups}
+          shown={shown}
+          total={highlights.length}
+          filtered={isFiltered}
+          onRestoreBackup={onRestoreBackup}
+          notify={notify}
+          onClose={() => setShowExport(false)}
+        />
       )}
     </div>
   );

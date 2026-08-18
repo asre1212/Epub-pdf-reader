@@ -24,6 +24,8 @@ export default function Library({
   onOpen,
   onDelete,
   onRename,
+  onOpenAbout,
+  updateReady,
 }) {
   const fileInput = useRef(null);
   const [query, setQuery] = useState('');
@@ -94,9 +96,30 @@ export default function Library({
       <header className="screen-head">
         <div className="screen-head-row">
           <h1>Library</h1>
-          <button type="button" className="btn btn-primary" onClick={pick} disabled={importing}>
-            {importing ? 'Importing…' : 'Add book'}
-          </button>
+          <div className="head-actions">
+            <button
+              type="button"
+              className={updateReady ? 'icon-btn icon-btn-bare has-badge' : 'icon-btn icon-btn-bare'}
+              onClick={onOpenAbout}
+              aria-label={updateReady ? 'About and updates — a new version is ready' : 'About and updates'}
+              title="About and updates"
+            >
+              <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true">
+                <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" strokeWidth="1.7" />
+                <path
+                  d="M12 10.6v5.2"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <circle cx="12" cy="7.9" r="1.05" fill="currentColor" />
+              </svg>
+            </button>
+            <button type="button" className="btn btn-primary" onClick={pick} disabled={importing}>
+              {importing ? 'Importing…' : 'Add book'}
+            </button>
+          </div>
         </div>
         <input
           ref={fileInput}
@@ -177,6 +200,11 @@ export default function Library({
                   {book.author && <span className="card-author">{book.author}</span>}
                   <span className="card-meta">
                     <span className={`chip chip-${book.format}`}>{book.format.toUpperCase()}</span>
+                    {book.missingFile && (
+                      <span className="chip chip-warn" title="Restored from a backup — import the file to read it">
+                        NOTES ONLY
+                      </span>
+                    )}
                     {percent > 0 && <span>{percent}%</span>}
                     {count > 0 && (
                       <span>

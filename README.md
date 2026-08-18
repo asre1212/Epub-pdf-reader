@@ -30,9 +30,33 @@ Settings apply live and are remembered between sessions.
 
 **Notes tab** — every highlight from every book, grouped by book and sorted by
 title, compiled into a single notepad. Search the text and notes, filter by book
-or colour, show only annotated highlights, edit notes in place, and copy or export
-the whole thing as Markdown or plain text. Tapping a highlight jumps to it in the
-book.
+or colour, show only annotated highlights, and edit notes in place. Tapping a
+highlight jumps to it in the book.
+
+**Export & backup** — the *Export* button covers whatever the current filters
+show, in the order shown:
+
+- **PDF** — a formatted document, one section per book, with the highlight
+  colour down the margin and the note and reference under each quote.
+- **Markdown** or **plain text** — for a notes app, or for anywhere else.
+- **Save a backup** — a JSON file holding every highlight with its colour, note,
+  chapter or page, and its exact anchor. Book files are not included; they are
+  the large part and you already have them.
+- **Restore from a backup** — merges a backup back in. Nothing is deleted and
+  nothing is overwritten, so restoring the same file twice is harmless. Books
+  are matched by content fingerprint, or by title and author. A book that is not
+  in the library yet is listed as *notes only*; import that file later and its
+  highlights reattach to it automatically.
+
+**Updates** — the ⓘ button in the library header opens About, which shows the
+running version and a *Check for updates* / *Update now* pair. Updates also
+install on their own: the app checks on launch, hourly, whenever you return to
+it, and when the connection comes back. A new version downloads in the
+background and is applied the moment you are not mid-book — never while a book
+is open. Turn *Install updates automatically* off and you get a banner with an
+Update button instead, and nothing reloads until you press it. Either way your
+library, highlights and settings are untouched: they live in IndexedDB, not in
+the cache the update replaces.
 
 ## Running it
 
@@ -49,8 +73,31 @@ preview` (or a real HTTPS host) to exercise installation and offline behaviour.
 ### Installing
 
 Open the built app in a browser and use *Install app* / *Add to Home Screen*.
-Once installed it launches standalone, registers as a handler for `.epub` and
-`.pdf` files on desktop, and appears in the Android share sheet for books.
+Once installed it launches standalone with its own icon, registers as a handler
+for `.epub` and `.pdf` files on desktop, and appears in the Android share sheet
+for books.
+
+### The app icon
+
+`public/icon.svg` is the master artwork. The PNGs beside it in `public/icons/`
+are rendered from it and committed:
+
+| File | Used by |
+| --- | --- |
+| `apple-touch-icon.png` (180) | iOS *Add to Home Screen* — square and opaque, because iOS rounds the corners itself |
+| `icon-192.png`, `icon-512.png` | Manifest, `purpose: any` — full-bleed, for launchers that do not re-crop |
+| `icon-maskable-512.png` | Manifest, `purpose: maskable` — same art shrunk into the 80% safe circle so an Android launcher can crop it to any shape without clipping the book |
+
+Regenerate them after editing the SVG:
+
+```bash
+node scripts/generate-icons.mjs
+```
+
+Rasterising needs a browser engine, which is not worth a build dependency, so
+the script uses Playwright only if it is already installed (`npm i -D
+playwright`) and otherwise leaves the committed PNGs alone. Set `CHROMIUM_PATH`
+if Playwright has not downloaded a browser of its own.
 
 ## How it is put together
 
@@ -63,9 +110,13 @@ Once installed it launches standalone, registers as a handler for `.epub` and
 | `src/components/EpubView.jsx` | epub.js rendition, CFI-anchored highlights, typography and flow |
 | `src/components/PdfView.jsx` / `PdfPage.jsx` | pdf.js canvas + selectable text layer, lazy page rendering, rect-anchored highlights |
 | `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
-| `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication |
+| `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
-| `src/sw.js` | Precaching, offline navigation, and the Web Share Target handler |
+| `src/lib/backup.js` | Building, parsing and merging notes backups |
+| `src/lib/printNotes.js` / `components/NotesPrintSheet.jsx` | The PDF export: a print-only rendition of the notepad |
+| `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
+| `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
+| `src/sw.js` | Precaching, offline navigation, the skip-waiting handler, and the Web Share Target |
 
 ### Anchoring highlights
 
@@ -73,6 +124,48 @@ EPUB highlights are stored as **EPUB CFI ranges**, so they survive changes to te
 size, margin, typeface and flow — the same highlight is repainted wherever the
 text reflows to. PDF highlights are stored as **page-relative rectangles**
 (fractions of the page box), so they survive zooming and window resizing.
+
+### The PDF export
+
+There is no PDF-writing library involved. `NotesPrintSheet` renders the notepad
+as a plain document beside the app, hidden on screen and revealed by the print
+stylesheet, and *Export as PDF* calls `window.print()` — so the browser's own
+print dialog is where you choose *Save as PDF*.
+
+That is a deliberate choice over generating the file directly. The browser lays
+out and hyphenates the text, and every script somebody might highlight in —
+Japanese, Arabic, Cyrillic, Greek — comes out with the right glyphs. A PDF built
+from the standard fonts is limited to WinAnsi and would silently mangle all of
+them, and fixing that means shipping font files measured in megabytes.
+
+A side effect worth knowing: the browser's own Print command in the Notes tab
+produces exactly the same document.
+
+### Backups
+
+A backup is `{ format, version, exportedAt, books, highlights }`. The books carry
+identity only — title, author, format, content fingerprint — never the file
+bytes. `restoreBackup` matches each one against the library by fingerprint, then
+by title and author, and recreates anything missing as a record with no file.
+`importFile` completes the circle: a file whose fingerprint or title matches a
+book that has no file attaches to that book instead of creating a second one.
+
+Merges are idempotent. A highlight is considered already present if its id is
+known, or if the same text is anchored at the same CFI or page in the same book.
+
+### Updates
+
+The worker is registered in *prompt* mode, so a new build installs and then
+waits rather than swapping itself in under a page that is being read.
+`src/lib/appUpdates.js` decides when to hand over: it watches the registration
+directly (so a version found by the browser or another tab counts too), posts
+`SKIP_WAITING`, and reloads on `controllerchange`. Because the reload is driven
+from the app rather than from the registration helper, it behaves the same
+however the update was discovered.
+
+Deployments must serve `index.html`, `sw.js` and `manifest.webmanifest` with
+`Cache-Control: no-cache`; the hashed files under `assets/` can be cached
+forever.
 
 ### Offline
 

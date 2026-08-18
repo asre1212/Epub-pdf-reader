@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 export default defineConfig({
   base: './',
@@ -12,7 +15,9 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
-      registerType: 'autoUpdate',
+      // The app drives updates itself (src/lib/appUpdates.js) so it can offer a
+      // real Update button and hold a reload back until nobody is mid-page.
+      registerType: 'prompt',
       injectManifest: {
         // The pdf.js worker is large, but it has to be there when we are offline.
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
@@ -44,8 +49,10 @@ export default defineConfig({
         scope: './',
         categories: ['books', 'education', 'productivity'],
         icons: [
+          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // Lets Android crop the icon to its launcher shape without clipping the book.
           { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         // Puts the installed app in the OS "Open with" list for books.
@@ -75,6 +82,10 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   build: {
     target: 'es2022',
     rollupOptions: {

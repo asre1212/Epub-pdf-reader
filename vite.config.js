@@ -49,8 +49,10 @@ export default defineConfig({
         scope: './',
         categories: ['books', 'education', 'productivity'],
         icons: [
+          { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // Lets Android crop the icon to its launcher shape without clipping the book.
           { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         // Puts the installed app in the OS "Open with" list for books.

@@ -73,8 +73,31 @@ preview` (or a real HTTPS host) to exercise installation and offline behaviour.
 ### Installing
 
 Open the built app in a browser and use *Install app* / *Add to Home Screen*.
-Once installed it launches standalone, registers as a handler for `.epub` and
-`.pdf` files on desktop, and appears in the Android share sheet for books.
+Once installed it launches standalone with its own icon, registers as a handler
+for `.epub` and `.pdf` files on desktop, and appears in the Android share sheet
+for books.
+
+### The app icon
+
+`public/icon.svg` is the master artwork. The PNGs beside it in `public/icons/`
+are rendered from it and committed:
+
+| File | Used by |
+| --- | --- |
+| `apple-touch-icon.png` (180) | iOS *Add to Home Screen* — square and opaque, because iOS rounds the corners itself |
+| `icon-192.png`, `icon-512.png` | Manifest, `purpose: any` — full-bleed, for launchers that do not re-crop |
+| `icon-maskable-512.png` | Manifest, `purpose: maskable` — same art shrunk into the 80% safe circle so an Android launcher can crop it to any shape without clipping the book |
+
+Regenerate them after editing the SVG:
+
+```bash
+node scripts/generate-icons.mjs
+```
+
+Rasterising needs a browser engine, which is not worth a build dependency, so
+the script uses Playwright only if it is already installed (`npm i -D
+playwright`) and otherwise leaves the committed PNGs alone. Set `CHROMIUM_PATH`
+if Playwright has not downloaded a browser of its own.
 
 ## How it is put together
 

@@ -22,6 +22,7 @@ import {
   updateBook,
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
+import { restoreBackup } from './lib/backup.js';
 import { importFiles } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
 import { drainSharedFiles } from './lib/shareInbox.js';
@@ -117,11 +118,20 @@ export default function App() {
       if (!files.length) return;
       setImporting(true);
       try {
-        const { added, duplicates, errors } = await importFiles(files);
+        const { added, duplicates, adopted, errors } = await importFiles(files);
         await refreshBooks();
         if (added.length) {
           notify(
             added.length === 1 ? `Added “${added[0].title}”` : `Added ${added.length} books`,
+            'success',
+          );
+        }
+        if (adopted.length) {
+          // These books came back from a notes backup without their files.
+          notify(
+            adopted.length === 1
+              ? `Reunited “${adopted[0].title}” with its highlights`
+              : `Reunited ${adopted.length} books with their highlights`,
             'success',
           );
         }
@@ -247,6 +257,15 @@ export default function App() {
     setHighlights((list) => list.filter((h) => h.id !== id));
   }, []);
 
+  const handleRestoreBackup = useCallback(
+    async (file) => {
+      const report = await restoreBackup(file);
+      await Promise.all([refreshBooks(), refreshHighlights()]);
+      return report;
+    },
+    [refreshBooks, refreshHighlights],
+  );
+
   const highlightCounts = useMemo(() => {
     const counts = new Map();
     for (const h of highlights) counts.set(h.bookId, (counts.get(h.bookId) || 0) + 1);
@@ -293,6 +312,7 @@ export default function App() {
                 onOpenHighlight={(book, highlight) => openBook(book, highlight.id)}
                 onEditHighlight={editHighlight}
                 onDeleteHighlight={removeHighlight}
+                onRestoreBackup={handleRestoreBackup}
                 notify={notify}
               />
             )}

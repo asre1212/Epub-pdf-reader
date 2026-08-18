@@ -200,6 +200,11 @@ export default function Library({
                   {book.author && <span className="card-author">{book.author}</span>}
                   <span className="card-meta">
                     <span className={`chip chip-${book.format}`}>{book.format.toUpperCase()}</span>
+                    {book.missingFile && (
+                      <span className="chip chip-warn" title="Restored from a backup — import the file to read it">
+                        NOTES ONLY
+                      </span>
+                    )}
                     {percent > 0 && <span>{percent}%</span>}
                     {count > 0 && (
                       <span>

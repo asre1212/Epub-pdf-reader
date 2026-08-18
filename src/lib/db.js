@@ -84,6 +84,15 @@ export async function getBookFile(id) {
   return rec?.blob ?? null;
 }
 
+/**
+ * Whether a book's file is stored, without reading it. Fetching the record would
+ * pull the whole book into memory, which matters when checking several at once.
+ */
+export async function hasBookFile(id) {
+  const key = await (await getDB()).getKey('files', id);
+  return key !== undefined;
+}
+
 /** Removes a book together with its file and every highlight in it. */
 export async function deleteBook(id) {
   const db = await getDB();

@@ -451,6 +451,12 @@ button {
   color: #2b7a4b;
 }
 
+/* A book restored from a notes backup, still waiting for its file. */
+.chip-warn {
+  color: #8a5a00;
+  background: color-mix(in srgb, #f0b429 26%, var(--surface-2));
+}
+
 .card-menu {
   position: absolute;
   top: 6px;
@@ -1538,6 +1544,182 @@ button {
 
 .toggle-row > span {
   line-height: 1.35;
+}
+
+/* ------------------------------------------------------- export & backup */
+
+.exportgroup {
+  border-top: 1px solid var(--line);
+  padding: 12px 0 4px;
+}
+
+.exportgroup h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.exportrow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 2px;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.exportrow:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.exportrow:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.exportrow-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.exportrow-text strong {
+  font-size: 14.5px;
+}
+
+.exportrow-text span {
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.exportrow-action {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* ------------------------------------------------------------ print sheet */
+
+/*
+ * The printable notepad. Hidden on screen; the print stylesheet below swaps it
+ * in for the app so "Export as PDF" and the browser's own Print command both
+ * produce the same document.
+ */
+.printsheet {
+  display: none;
+}
+
+@media print {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+    color: #000;
+  }
+
+  .app,
+  .toasts,
+  .sheet-backdrop,
+  .drawer-backdrop,
+  .dropzone {
+    display: none !important;
+  }
+
+  @page {
+    margin: 18mm 15mm 16mm;
+  }
+
+  .printsheet {
+    display: block;
+    font-family: Georgia, 'Times New Roman', serif;
+    color: #000;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .printsheet-head {
+    border-bottom: 1.5pt solid #000;
+    padding-bottom: 8pt;
+    margin-bottom: 18pt;
+  }
+
+  .printsheet-head h1 {
+    margin: 0;
+    font-size: 22pt;
+    letter-spacing: -0.01em;
+  }
+
+  .printsheet-head p {
+    margin: 4pt 0 0;
+    font-size: 9.5pt;
+    color: #555;
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  .printsheet-book {
+    margin-bottom: 20pt;
+    break-inside: auto;
+  }
+
+  .printsheet-book h2 {
+    font-size: 14pt;
+    margin: 0 0 1pt;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .printsheet-author {
+    margin: 0 0 10pt;
+    font-size: 10pt;
+    font-style: italic;
+    color: #555;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Keep a quote, its note and its reference together on one page. */
+  .printnote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    padding: 2pt 0 2pt 10pt;
+    margin-bottom: 12pt;
+    border-left: 3.5pt solid var(--note-color);
+  }
+
+  .printnote-text {
+    margin: 0;
+  }
+
+  .printnote-note {
+    margin: 6pt 0 0;
+    padding-left: 8pt;
+    border-left: 1pt solid #bbb;
+    font-size: 10pt;
+    color: #333;
+  }
+
+  .printnote-meta {
+    margin: 4pt 0 0;
+    font-size: 8.5pt;
+    color: #666;
+    font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    letter-spacing: 0.02em;
+  }
 }
 
 /* ------------------------------------------------------------- wider views */

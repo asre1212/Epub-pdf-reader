@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 export default defineConfig({
   base: './',
@@ -12,7 +15,9 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
-      registerType: 'autoUpdate',
+      // The app drives updates itself (src/lib/appUpdates.js) so it can offer a
+      // real Update button and hold a reload back until nobody is mid-page.
+      registerType: 'prompt',
       injectManifest: {
         // The pdf.js worker is large, but it has to be there when we are offline.
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
@@ -75,6 +80,10 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
   build: {
     target: 'es2022',
     rollupOptions: {

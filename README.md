@@ -34,6 +34,16 @@ or colour, show only annotated highlights, edit notes in place, and copy or expo
 the whole thing as Markdown or plain text. Tapping a highlight jumps to it in the
 book.
 
+**Updates** — the ⓘ button in the library header opens About, which shows the
+running version and a *Check for updates* / *Update now* pair. Updates also
+install on their own: the app checks on launch, hourly, whenever you return to
+it, and when the connection comes back. A new version downloads in the
+background and is applied the moment you are not mid-book — never while a book
+is open. Turn *Install updates automatically* off and you get a banner with an
+Update button instead, and nothing reloads until you press it. Either way your
+library, highlights and settings are untouched: they live in IndexedDB, not in
+the cache the update replaces.
+
 ## Running it
 
 ```bash
@@ -65,7 +75,9 @@ Once installed it launches standalone, registers as a handler for `.epub` and
 | `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
-| `src/sw.js` | Precaching, offline navigation, and the Web Share Target handler |
+| `src/lib/appUpdates.js` | Service worker lifecycle: version checks, the update state, and when a new build is applied |
+| `src/components/AboutSheet.jsx` / `UpdateBanner.jsx` | Version and update UI |
+| `src/sw.js` | Precaching, offline navigation, the skip-waiting handler, and the Web Share Target |
 
 ### Anchoring highlights
 
@@ -73,6 +85,20 @@ EPUB highlights are stored as **EPUB CFI ranges**, so they survive changes to te
 size, margin, typeface and flow — the same highlight is repainted wherever the
 text reflows to. PDF highlights are stored as **page-relative rectangles**
 (fractions of the page box), so they survive zooming and window resizing.
+
+### Updates
+
+The worker is registered in *prompt* mode, so a new build installs and then
+waits rather than swapping itself in under a page that is being read.
+`src/lib/appUpdates.js` decides when to hand over: it watches the registration
+directly (so a version found by the browser or another tab counts too), posts
+`SKIP_WAITING`, and reloads on `controllerchange`. Because the reload is driven
+from the app rather than from the registration helper, it behaves the same
+however the update was discovered.
+
+Deployments must serve `index.html`, `sw.js` and `manifest.webmanifest` with
+`Cache-Control: no-cache`; the hashed files under `assets/` can be cached
+forever.
 
 ### Offline
 

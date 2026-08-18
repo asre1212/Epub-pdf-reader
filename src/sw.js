@@ -56,7 +56,12 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-self.skipWaiting();
+// A new worker waits until the page asks for it, so the app can decide when a
+// reload is welcome. workbox-window's messageSkipWaiting() sends this.
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
 clientsClaim();
 cleanupOutdatedCaches();
 precacheAndRoute(self.__WB_MANIFEST);

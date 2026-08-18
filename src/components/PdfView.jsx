@@ -391,7 +391,12 @@ const PdfView = forwardRef(function PdfView(
         saveHighlight({ rects, text, color: settings.defaultColor });
       },
       onTap: () => onToggleChrome(),
-      onMiss: () => notify('No text under that drag — try across a line.'),
+      onMiss: (reason) =>
+            notify(
+              reason === 'no-text-found'
+                ? 'Could not read the text on this page to highlight it.'
+                : 'No text under that drag — try across a line.',
+            ),
     });
   }, [highlighterOn, settings.defaultColor, pageBoxes, saveHighlight, onToggleChrome, notify]);
 

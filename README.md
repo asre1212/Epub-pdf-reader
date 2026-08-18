@@ -195,11 +195,22 @@ way on an actual iPhone:
 - **The gesture is tracked with Touch events, not Pointer events**, which have a
   patchy history inside iframes on iOS.
 
-There is also a fallback for when the caret APIs refuse regardless: a scan of the
-words inside the element under the finger, picking the nearest one. Word
-granularity keeps it cheap enough to run on every move, and the result is snapped
-to words anyway. `webkit-sim-test` covers this by disabling the caret APIs
-outright and checking a drag still highlights.
+Inside epub.js's iframe on WebKit, hit-testing does not work at all — neither
+`caretRangeFromPoint` nor `elementFromPoint` returns anything usable. So the
+fallback uses no hit-testing API whatsoever. On touch-down it measures every
+visible word with `Range.getBoundingClientRect` and builds an index of where each
+one sits; from then on, finding the text under the finger is a search over those
+rectangles. Nothing can scroll while the highlighter holds the gesture, so the
+measurements stay true for the life of the drag, and only text within the
+viewport is measured — the page in front of you, not the chapter.
+
+Word granularity is not a compromise here: the range is snapped to word
+boundaries regardless, so the outcome is identical to a caret hit-test.
+
+`webkit-sim-test` covers this by breaking the APIs inside the book — first making
+the caret APIs return null, then removing them, then killing `elementFromPoint`
+too — and checking that a real finger drag still produces a highlight with the
+right text.
 
 The EPUB view converts the finished Range to a CFI with `contents.cfiFromRange`,
 and the PDF view converts it to page-relative rectangles — so a dragged highlight

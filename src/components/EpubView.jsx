@@ -367,7 +367,12 @@ const EpubView = forwardRef(function EpubView(
             handleTap(x + offset.left);
           },
           // Never fail silently: a drag that caught no text should say so.
-          onMiss: () => notify('No text under that drag — try across a line.'),
+          onMiss: (reason) =>
+            notify(
+              reason === 'no-text-found'
+                ? 'Could not read the text on this page to highlight it.'
+                : 'No text under that drag — try across a line.',
+            ),
         }),
       );
     },

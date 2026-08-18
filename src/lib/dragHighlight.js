@@ -20,7 +20,6 @@
 
 const WORD = /[\p{L}\p{N}'’-]/u;
 const DRAG_SLOP = 6; // px of movement before a press becomes a drag
-const FALLBACK_MAX_WORDS = 400; // cap on the per-word scan, so a move stays cheap
 
 /** The caret position under a point, across the two spellings of the API. */
 function caretFromApi(doc, x, y) {
@@ -41,60 +40,85 @@ function caretFromApi(doc, x, y) {
 }
 
 /**
- * Last resort when the caret APIs refuse: find the nearest word inside the
- * element under the finger. Word granularity rather than character keeps this
- * cheap enough to run on every move, and the result is snapped to words anyway.
+ * A map of every visible word to where it sits on screen.
+ *
+ * This is the fallback when the caret APIs refuse, and it deliberately uses no
+ * hit-testing API at all — not `caretRangeFromPoint`, not `elementFromPoint`.
+ * Inside epub.js's iframe on WebKit those return nothing, which left dragging
+ * dead with no way to recover. Measured `Range` geometry always works.
+ *
+ * Only text within the viewport is measured, so in a paginated book this is the
+ * page in front of you rather than the chapter. Built once per drag: nothing can
+ * scroll while the highlighter owns the gesture, so the rectangles stay true.
  */
-function caretFromNearestWord(doc, x, y) {
-  let element;
-  try {
-    element = doc.elementFromPoint(x, y);
-  } catch {
-    return null;
-  }
-  if (!element) return null;
-
-  const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+function buildWordIndex(doc) {
+  const view = doc.defaultView;
+  if (!doc.body || !view) return [];
+  const width = view.innerWidth;
+  const height = view.innerHeight;
+  const margin = 120;
+  const words = [];
   const probe = doc.createRange();
-  let best = null;
-  let bestDistance = Infinity;
-  let budget = FALLBACK_MAX_WORDS;
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   let node;
 
-  while ((node = walker.nextNode()) && budget > 0) {
+  while ((node = walker.nextNode())) {
     const text = node.data;
-    for (let i = 0; i < text.length && budget > 0; ) {
+    if (!text.trim()) continue;
+
+    probe.selectNodeContents(node);
+    const bounds = probe.getBoundingClientRect();
+    if (!bounds.width && !bounds.height) continue;
+    if (bounds.bottom < -margin || bounds.top > height + margin) continue;
+    if (bounds.right < -margin || bounds.left > width + margin) continue;
+
+    for (let i = 0; i < text.length; ) {
       while (i < text.length && !WORD.test(text[i])) i += 1;
       if (i >= text.length) break;
       let end = i;
       while (end < text.length && WORD.test(text[end])) end += 1;
 
-      budget -= 1;
       probe.setStart(node, i);
       probe.setEnd(node, end);
-      const rect = probe.getBoundingClientRect();
-      if (rect.width || rect.height) {
-        const dx = x - Math.min(Math.max(x, rect.left), rect.right);
-        const dy = y - Math.min(Math.max(y, rect.top), rect.bottom);
-        const distance = dx * dx + dy * dy;
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          best = { node, offset: x > rect.right ? end : i };
-        }
+      for (const rect of probe.getClientRects()) {
+        if (rect.width || rect.height) words.push({ node, start: i, end, rect });
       }
       i = end;
     }
   }
+  return words;
+}
 
+/** Distance from a point to a rectangle, zero when inside it. */
+function distanceTo(rect, x, y) {
+  const dx = x - Math.min(Math.max(x, rect.left), rect.right);
+  const dy = y - Math.min(Math.max(y, rect.top), rect.bottom);
+  // Weight vertical distance: the nearest word on this line beats a closer one
+  // on the line above.
+  return dx * dx + dy * dy * 4;
+}
+
+function caretFromIndex(doc, index, x, y) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const word of index) {
+    const distance = distanceTo(word.rect, x, y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = word;
+    }
+  }
   if (!best) return null;
   const range = doc.createRange();
-  range.setStart(best.node, best.offset);
+  // Snap to whichever end of the word the finger is nearer.
+  const after = x > best.rect.left + best.rect.width / 2;
+  range.setStart(best.node, after ? best.end : best.start);
   range.collapse(true);
   return range;
 }
 
-export function caretRangeAt(doc, x, y) {
-  return caretFromApi(doc, x, y) || caretFromNearestWord(doc, x, y);
+export function caretRangeAt(doc, x, y, index) {
+  return caretFromApi(doc, x, y) || (index ? caretFromIndex(doc, index, x, y) : null);
 }
 
 /** A Range spanning two collapsed carets, whichever order they were made in. */
@@ -163,6 +187,7 @@ export function attachDragHighlighter({
   let latest = null;
   let dragging = false;
   let active = false;
+  let index = null;
 
   const reset = () => {
     anchor = null;
@@ -170,6 +195,7 @@ export function attachDragHighlighter({
     latest = null;
     dragging = false;
     active = false;
+    index = null;
   };
 
   const clearNativeSelection = () => {
@@ -183,7 +209,9 @@ export function attachDragHighlighter({
   const begin = (x, y, target) => {
     if (!isEnabled()) return false;
     if (containerFor && !containerFor(target)) return false;
-    anchor = caretRangeAt(doc, x, y);
+    // Measured once per drag; the page cannot move while we hold the gesture.
+    index = buildWordIndex(doc);
+    anchor = caretRangeAt(doc, x, y, index);
     origin = { x, y };
     latest = null;
     dragging = false;
@@ -198,10 +226,12 @@ export function attachDragHighlighter({
     dragging = true;
     // The caret may not have resolved at touch-down — over a margin, say — so
     // keep trying until the finger reaches something addressable.
-    if (!anchor) anchor = caretRangeAt(doc, origin.x, origin.y) || caretRangeAt(doc, x, y);
+    if (!anchor) {
+      anchor = caretRangeAt(doc, origin.x, origin.y, index) || caretRangeAt(doc, x, y, index);
+    }
     if (!anchor) return true;
 
-    const focus = caretRangeAt(doc, x, y);
+    const focus = caretRangeAt(doc, x, y, index);
     if (!focus) return true;
     const range = rangeBetween(doc, anchor, focus);
     if (!range) return true;
@@ -217,10 +247,13 @@ export function attachDragHighlighter({
     let range = latest;
 
     if (wasDragging && anchor && Number.isFinite(x)) {
-      const focus = caretRangeAt(doc, x, y);
+      const focus = caretRangeAt(doc, x, y, index);
       const fresh = focus && rangeBetween(doc, anchor, focus);
       if (fresh) range = snapToWords(fresh);
     }
+    // Why it failed, if it did — the difference between "we could not read the
+    // page" and "you dragged across a margin" is the whole diagnosis.
+    const reason = !index?.length ? 'no-text-found' : !anchor ? 'no-anchor' : 'empty-range';
     reset();
     onPreview(null);
     clearNativeSelection();
@@ -231,7 +264,7 @@ export function attachDragHighlighter({
     }
     const text = range?.toString().replace(/\s+/g, ' ').trim();
     if (range && text) onCommit({ range, text });
-    else onMiss?.();
+    else onMiss?.(reason);
   };
 
   const cancel = () => {

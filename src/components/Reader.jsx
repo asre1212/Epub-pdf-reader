@@ -320,7 +320,12 @@ export default function Reader({
       )}
 
       {showDiagnostics && (
-        <DiagnosticsSheet notify={notify} onClose={() => setShowDiagnostics(false)} />
+        <DiagnosticsSheet
+          format={book.format}
+          onSelfTest={() => viewRef.current?.selfTest?.() || null}
+          notify={notify}
+          onClose={() => setShowDiagnostics(false)}
+        />
       )}
 
       {showToc && (

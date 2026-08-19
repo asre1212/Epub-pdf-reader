@@ -42,12 +42,20 @@ Page turns slide the page across rather than cutting to the next one; *Animate
 page turns* in settings turns that off, and it is skipped anyway when the system
 asks for reduced motion.
 
+In an EPUB the drag is heard by a transparent sheet over the book rather than
+inside epub.js's iframe, which is where it was heard until an iPhone reported
+dozens of failed highlights and not one recorded gesture. The text is still
+measured inside the frame; only the listening moved out.
+
 If a drag ever fails to highlight, *Highlighter diagnostics* at the foot of the
-settings sheet records what the last few gestures actually did — whether the
+settings sheet has two halves. The self-test runs the whole highlight pipeline
+on the page behind it without anyone touching the screen, so it answers even
+when no gesture registers at all. Below it are the gestures that did arrive — whether the
 touches arrived, how much text could be measured on the page, whether a range
-was built and whether it could be anchored to the book. The failure message
-itself offers a *Why?* button that opens the same screen, and *Copy all* puts it
-on the clipboard for a bug report. It exists because the highlighter runs inside
+was built and whether it could be anchored to the book. An empty gesture list
+after a drag is itself the finding: the touch is not reaching the highlighter.
+The failure message offers a *Why?* button that opens the same screen, and
+*Copy all* or *Save file* hands the lot over for a bug report. It exists because the highlighter runs inside
 an iframe on a phone, where none of that is visible from the outside.
 
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,

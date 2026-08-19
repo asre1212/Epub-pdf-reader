@@ -7,7 +7,7 @@ import {
   getTraces,
   subscribeTraces,
 } from '../lib/highlighterTrace.js';
-import { copyToClipboard } from '../lib/exportNotes.js';
+import { copyToClipboard, downloadText } from '../lib/exportNotes.js';
 
 /**
  * What the last few highlighter gestures did, on this device.
@@ -16,14 +16,36 @@ import { copyToClipboard } from '../lib/exportNotes.js';
  * report is holding and the author of the fix is not. This is the bridge: drag,
  * open this, and every branch the gesture took is written down in one screen.
  */
-export default function DiagnosticsSheet({ onClose, notify }) {
+export default function DiagnosticsSheet({ format, onSelfTest, onClose, notify }) {
   const [traces, setTraces] = useState(getTraces());
+  const [steps, setSteps] = useState(null);
 
   useEffect(() => subscribeTraces((next) => setTraces([...next])), []);
 
+  const report = () =>
+    [
+      environmentSummary(),
+      '',
+      steps
+        ? ['self-test:', ...steps.map((s) => `  [${s.ok ? 'ok' : 'FAIL'}] ${s.name}${s.detail ? ` — ${s.detail}` : ''}`)].join('\n')
+        : 'self-test: not run',
+      '',
+      formatTraces(),
+    ].join('\n');
+
   const copy = async () => {
-    const ok = await copyToClipboard(`${environmentSummary()}\n\n${formatTraces()}`);
+    const ok = await copyToClipboard(report());
     notify?.(ok ? 'Diagnostics copied' : 'Could not copy', ok ? 'success' : 'error');
+  };
+
+  const save = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    downloadText(`highlighter-diagnostics-${stamp}.txt`, report());
+  };
+
+  const run = () => {
+    const result = onSelfTest?.();
+    setSteps(result || [{ name: 'self-test available', ok: false, detail: 'not supported here' }]);
   };
 
   return (
@@ -38,9 +60,37 @@ export default function DiagnosticsSheet({ onClose, notify }) {
         <div className="sheet-grip" aria-hidden="true" />
         <h2 className="sheet-title">Highlighter diagnostics</h2>
         <p className="set-hint">
-          The last few drags, newest first. Turn the highlighter on, drag across a line, then come
-          back here — <em>outcome</em> says what happened and the lines under it say why.
+          Two halves. The <strong>self-test</strong> runs the whole highlight pipeline on the page
+          behind this sheet without anyone touching the screen, so it works even when a drag never
+          registers. The <strong>gestures</strong> below are what happened when a finger did arrive
+          — if that list stays empty after you drag, the touch is not reaching the highlighter at
+          all, which is a different fault entirely.
         </p>
+
+        {format === 'epub' && (
+          <>
+            <button type="button" className="btn" onClick={run}>
+              {steps ? 'Run the self-test again' : 'Run the self-test'}
+            </button>
+            {steps && (
+              <ol className="diag-steps">
+                {steps.map((step, index) => (
+                  <li key={index} className={step.ok ? 'diag-step is-ok' : 'diag-step is-bad'}>
+                    <span className="diag-step-mark" aria-hidden="true">
+                      {step.ok ? '✓' : '✕'}
+                    </span>
+                    <span>
+                      {step.name}
+                      {step.detail && <em className="diag-step-detail">{step.detail}</em>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </>
+        )}
+
+        <h3 className="diag-subhead">Gestures</h3>
 
         {!traces.length && (
           <p className="diag-empty">
@@ -75,6 +125,9 @@ export default function DiagnosticsSheet({ onClose, notify }) {
           </button>
           <button type="button" className="btn" onClick={copy}>
             Copy all
+          </button>
+          <button type="button" className="btn" onClick={save}>
+            Save file
           </button>
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done

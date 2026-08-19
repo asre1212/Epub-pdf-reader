@@ -18,6 +18,7 @@ export default function Reader({
   onAddHighlight,
   onEditHighlight,
   onDeleteHighlight,
+  onUndeleteHighlight,
   onProgress,
   notify,
 }) {
@@ -213,7 +214,11 @@ export default function Reader({
 
       {highlighterOn && (
         <div className="highlightbar">
-          <span className="highlightbar-hint">Drag across text to highlight</span>
+          <span className="highlightbar-hint">
+            {settings.tapToErase
+              ? 'Drag across text to highlight, tap a highlight to erase'
+              : 'Drag across text to highlight'}
+          </span>
           <div className="swatch-row" role="group" aria-label="Highlighter colour">
             {HIGHLIGHT_COLORS.map((color) => (
               <button
@@ -252,6 +257,7 @@ export default function Reader({
               onCreateHighlight={handleCreate}
               onUpdateHighlight={onEditHighlight}
               onDeleteHighlight={onDeleteHighlight}
+              onUndeleteHighlight={onUndeleteHighlight}
               onProgress={onProgress}
               onMeta={handleMeta}
               onToggleChrome={toggleChrome}

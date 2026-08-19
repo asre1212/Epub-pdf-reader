@@ -1406,6 +1406,28 @@ button {
   font-size: 13.5px;
   box-shadow: var(--shadow);
   animation: slide-up 0.18s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The stack itself is transparent to the finger; an undo button is not. */
+.toast-action {
+  pointer-events: auto;
+  margin-left: auto;
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .toast-success {
@@ -1801,30 +1823,15 @@ button {
 /* --------------------------------------------------------- page turn --- */
 
 /*
- * epub.js swaps columns instantly. The host slides and fades across the turn,
- * and the swap is timed to land at the midpoint while the text is invisible, so
- * the eye reads it as one movement rather than a jump cut.
+ * The turn is driven from EpubView, which translates the rendered view inside
+ * epub.js's container. All the stylesheet owes it is a clip that holds, so the
+ * page arriving and the page leaving stay inside the stage rather than sliding
+ * out across the reader. Nothing is promoted to its own layer here: the view
+ * holds an iframe, and a layer kept around one permanently costs more on iOS
+ * than the turn is worth, so EpubView asks for it only while it slides.
  */
-.epub-host.is-turning-next {
-  animation: page-turn-next 260ms cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-.epub-host.is-turning-prev {
-  animation: page-turn-prev 260ms cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-@keyframes page-turn-next {
-  0% { transform: translateX(0); opacity: 1; }
-  44% { transform: translateX(-8%); opacity: 0; }
-  56% { transform: translateX(8%); opacity: 0; }
-  100% { transform: translateX(0); opacity: 1; }
-}
-
-@keyframes page-turn-prev {
-  0% { transform: translateX(0); opacity: 1; }
-  44% { transform: translateX(8%); opacity: 0; }
-  56% { transform: translateX(-8%); opacity: 0; }
-  100% { transform: translateX(0); opacity: 1; }
+.epub-host .epub-container {
+  overflow: hidden;
 }
 
 /* ------------------------------------------------------------------- sync */

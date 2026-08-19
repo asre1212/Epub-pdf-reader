@@ -13,6 +13,7 @@ import NoteDialog from './NoteDialog.jsx';
 import { closePdf, openPdf } from '../lib/pdf.js';
 import { hitTest, normalizeSelectionRects } from '../lib/pdfRects.js';
 import { attachDragHighlighter } from '../lib/dragHighlight.js';
+import { colorHex } from '../lib/highlightColors.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
 const BUFFER = 2; // pages kept rendered on either side of the viewport
@@ -27,6 +28,7 @@ const PdfView = forwardRef(function PdfView(
     onCreateHighlight,
     onUpdateHighlight,
     onDeleteHighlight,
+    onUndeleteHighlight,
     onProgress,
     onMeta,
     onToggleChrome,
@@ -43,6 +45,7 @@ const PdfView = forwardRef(function PdfView(
   const restoredRef = useRef(false);
   const pointerRef = useRef(null);
   const highlighterRef = useRef(highlighterOn);
+  const settingsRef = useRef(settings);
   const [preview, setPreview] = useState(null);
 
   const [pdf, setPdf] = useState(null);
@@ -58,6 +61,7 @@ const PdfView = forwardRef(function PdfView(
 
   highlightsRef.current = highlights;
   highlighterRef.current = highlighterOn;
+  settingsRef.current = settings;
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -235,6 +239,59 @@ const PdfView = forwardRef(function PdfView(
     [pageElements],
   );
 
+  /** The topmost highlight under a viewport point, with where it sits on screen. */
+  const highlightAt = useCallback(
+    (clientX, clientY) => {
+      // Locate the page by coordinates rather than by event target: a tap can
+      // land on the text layer, a span, or the page margin.
+      const hitPage = pageBoxes().find(
+        ({ box }) =>
+          clientX >= box.left &&
+          clientX <= box.right &&
+          clientY >= box.top &&
+          clientY <= box.bottom,
+      );
+      if (!hitPage) return null;
+      const { box, page } = hitPage;
+      const x = (clientX - box.left) / box.width;
+      const y = (clientY - box.top) / box.height;
+      const hit = [...highlightsRef.current]
+        .reverse()
+        .find((highlight) => hitTest(highlight, page, x, y));
+      if (!hit) return null;
+      const first = hit.rects.find((rect) => rect.p === page) || hit.rects[0];
+      return {
+        id: hit.id,
+        rect: {
+          left: box.left + first.x * box.width,
+          top: box.top + first.y * box.height,
+          width: first.w * box.width,
+          height: first.h * box.height,
+        },
+      };
+    },
+    [pageBoxes],
+  );
+
+  /**
+   * Removes a highlight the reader tapped, with a way back. Tapping to erase is
+   * quick precisely because it asks nothing first, so the undo is not a nicety:
+   * it is the confirmation, moved to after the fact.
+   */
+  const eraseHighlight = useCallback(
+    (id) => {
+      const gone = highlightsRef.current.find((h) => h.id === id);
+      if (!gone) return;
+      closeMenu();
+      onDeleteHighlight(id);
+      notify('Highlight erased', 'info', {
+        label: 'Undo',
+        onAct: () => onUndeleteHighlight(gone),
+      });
+    },
+    [closeMenu, notify, onUndeleteHighlight, onDeleteHighlight],
+  );
+
   const readSelection = useCallback(() => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
@@ -270,36 +327,11 @@ const PdfView = forwardRef(function PdfView(
         start && (Math.abs(event.clientX - start.x) > 6 || Math.abs(event.clientY - start.y) > 6);
       if (moved) return;
 
-      // Locate the page by coordinates rather than by event target: a tap can
-      // land on the text layer, a span, or the page margin.
-      const hitPage = pageBoxes().find(
-        ({ box }) =>
-          event.clientX >= box.left &&
-          event.clientX <= box.right &&
-          event.clientY >= box.top &&
-          event.clientY <= box.bottom,
-      );
-      if (hitPage) {
-        const { box, page } = hitPage;
-        const x = (event.clientX - box.left) / box.width;
-        const y = (event.clientY - box.top) / box.height;
-        const hit = [...highlightsRef.current]
-          .reverse()
-          .find((highlight) => hitTest(highlight, page, x, y));
-        if (hit) {
-          const first = hit.rects.find((rect) => rect.p === page) || hit.rects[0];
-          setMenu({
-            mode: 'edit',
-            id: hit.id,
-            rect: {
-              left: box.left + first.x * box.width,
-              top: box.top + first.y * box.height,
-              width: first.w * box.width,
-              height: first.h * box.height,
-            },
-          });
-          return;
-        }
+      const hit = highlightAt(event.clientX, event.clientY);
+      if (hit) {
+        if (settingsRef.current.tapToErase) eraseHighlight(hit.id);
+        else setMenu({ mode: 'edit', id: hit.id, rect: hit.rect });
+        return;
       }
 
       if (menu) {
@@ -308,7 +340,7 @@ const PdfView = forwardRef(function PdfView(
       }
       onToggleChrome();
     },
-    [readSelection, pageBoxes, menu, closeMenu, onToggleChrome],
+    [readSelection, highlightAt, eraseHighlight, menu, closeMenu, onToggleChrome],
   );
 
   // Escape closes the toolbar rather than the book: capture the key before the
@@ -373,6 +405,12 @@ const PdfView = forwardRef(function PdfView(
       doc: document,
       isEnabled: () => highlighterRef.current,
       containerFor: (target) => target?.closest?.('.pdf-page'),
+      // Long documents keep many pages in the DOM; only the ones on screen are
+      // candidates for the nearest word to a finger.
+      visibleBox: () => {
+        const box = scrollRef.current?.getBoundingClientRect();
+        return box && { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+      },
       onPreview: (rects) =>
         setPreview(
           rects && {
@@ -390,15 +428,37 @@ const PdfView = forwardRef(function PdfView(
         if (!rects.length) return;
         saveHighlight({ rects, text, color: settings.defaultColor });
       },
-      onTap: () => onToggleChrome(),
+      // A tap while the highlighter is on still lands on the page, so it is the
+      // eraser's chance to act before anything else reads it.
+      onTap: (x, y) => {
+        const hit = highlightAt(x, y);
+        if (hit && settingsRef.current.tapToErase) {
+          eraseHighlight(hit.id);
+          return;
+        }
+        if (hit) {
+          setMenu({ mode: 'edit', id: hit.id, rect: hit.rect });
+          return;
+        }
+        onToggleChrome();
+      },
       onMiss: (reason) =>
-            notify(
-              reason === 'no-text-found'
-                ? 'Could not read the text on this page to highlight it.'
-                : 'No text under that drag — try across a line.',
-            ),
+        notify(
+          reason === 'no-text-found'
+            ? 'Could not read the text on this page to highlight it.'
+            : 'No text under that drag — try across a line.',
+        ),
     });
-  }, [highlighterOn, settings.defaultColor, pageBoxes, saveHighlight, onToggleChrome, notify]);
+  }, [
+    highlighterOn,
+    settings.defaultColor,
+    pageBoxes,
+    saveHighlight,
+    highlightAt,
+    eraseHighlight,
+    onToggleChrome,
+    notify,
+  ]);
 
   const createHighlight = useCallback(
     async (colorId, note = '') => {

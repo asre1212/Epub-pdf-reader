@@ -10,9 +10,8 @@ import { copyToClipboard } from '../lib/exportNotes.js';
 const HIGHLIGHT_CLASS = 'marginalia-hl';
 const SWIPE_MIN = 45;
 const STYLE_ID = 'marginalia-highlighter-mode';
-// The page-turn animation swaps content at its midpoint, while it is faded out.
-const TURN_MS = 260;
-const TURN_SWAP_MS = 115;
+const TURN_MS = 280;
+const TURN_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
 function flatten(items, depth = 0, out = []) {
   for (const item of items || []) {
@@ -67,6 +66,51 @@ function themeRules(settings) {
   };
 }
 
+/**
+ * Slides the rendered page across after epub.js has already turned it.
+ *
+ * epub.js pages a chapter by scrolling its container over one very wide iframe,
+ * so a turn is instant. Replaying it is a matter of putting the content back
+ * where it came from and letting it travel: the element that moves is the view
+ * *inside* the clip, which is a plain translation of what is already painted.
+ *
+ * The earlier version animated the whole stage and faded it to nothing at the
+ * midpoint, which is where it broke — WebKit will not keep compositing an iframe
+ * under an animating opacity, so on iOS the page blinked out and back rather
+ * than turning. Nothing fades here, and if a browser refuses to animate the
+ * transform it simply arrives, which is the behaviour with animation off.
+ */
+function slidePages(container, shift, ms) {
+  const views = [...container.children];
+  if (!views.length || !shift) return Promise.resolve();
+
+  for (const view of views) {
+    view.style.willChange = 'transform';
+    view.style.transition = 'none';
+    view.style.transform = `translate3d(${shift}px, 0, 0)`;
+  }
+  // Commit the starting offset before the transition is armed.
+  void container.offsetHeight;
+
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      for (const view of views) {
+        view.style.transition = `transform ${ms}ms ${TURN_EASE}`;
+        view.style.transform = 'translate3d(0, 0, 0)';
+      }
+      setTimeout(resolve, ms + 20);
+    });
+  });
+}
+
+function clearSlide(container) {
+  for (const view of container?.children || []) {
+    view.style.transition = '';
+    view.style.transform = '';
+    view.style.willChange = '';
+  }
+}
+
 /** Maps a Range inside an epub.js iframe to viewport coordinates. */
 function viewportRect(range, contents) {
   const inner = range.getBoundingClientRect();
@@ -91,6 +135,7 @@ const EpubView = forwardRef(function EpubView(
     onCreateHighlight,
     onUpdateHighlight,
     onDeleteHighlight,
+    onUndeleteHighlight,
     onProgress,
     onMeta,
     onToggleChrome,
@@ -114,8 +159,8 @@ const EpubView = forwardRef(function EpubView(
   const highlighterRef = useRef(highlighterOn);
   // contents.document -> detach function for its drag listener
   const dragDetachRef = useRef(new Map());
-  const turningRef = useRef(false);
-  const [turn, setTurn] = useState(null);
+  // Bumped on every turn so an animation still running can tell it was replaced.
+  const turnRef = useRef(0);
   const [preview, setPreview] = useState(null);
 
   const [status, setStatus] = useState('loading');
@@ -128,6 +173,30 @@ const EpubView = forwardRef(function EpubView(
   highlighterRef.current = highlighterOn;
 
   const closeMenu = useCallback(() => setMenu(null), []);
+
+  /**
+   * Removes a highlight the reader tapped, with a way back. Tapping to erase is
+   * quick precisely because it asks nothing first, so the undo is not a nicety:
+   * it is the confirmation, moved to after the fact.
+   */
+  const eraseHighlight = useCallback(
+    (id) => {
+      const gone = highlightsRef.current.find((h) => h.id === id);
+      if (!gone) return;
+      closeMenu();
+      onDeleteHighlight(id);
+      notify('Highlight erased', 'info', {
+        label: 'Undo',
+        onAct: () => onUndeleteHighlight(gone),
+      });
+    },
+    [closeMenu, notify, onUndeleteHighlight, onDeleteHighlight],
+  );
+
+  // The annotation callbacks are handed to epub.js once, so they reach the
+  // current eraser through a ref rather than capturing yesterday's.
+  const eraseRef = useRef(eraseHighlight);
+  eraseRef.current = eraseHighlight;
 
   /* ------------------------------------------------------------- highlights */
 
@@ -157,6 +226,10 @@ const EpubView = forwardRef(function EpubView(
           { id: highlight.id },
           (event) => {
             markClickRef.current = Date.now();
+            if (settingsRef.current.tapToErase) {
+              eraseRef.current(highlight.id);
+              return;
+            }
             const target = event?.currentTarget || event?.target;
             const box = target?.getBoundingClientRect?.();
             setMenu({
@@ -219,38 +292,49 @@ const EpubView = forwardRef(function EpubView(
   );
 
   /**
-   * Turns the page with a slide-and-fade. epub.js swaps columns instantly, so
-   * the animation runs on the host element and the swap is timed to land at its
-   * midpoint, while the text is faded out.
+   * Turns the page, then replays the turn as a slide.
+   *
+   * The turn itself happens first and unconditionally, so a tap is never held
+   * up by the animation and rapid turns cannot fall behind. What follows is
+   * cosmetic: the page that just arrived is put back where it came from and
+   * released. A turn that crosses into a new chapter has no scroll distance to
+   * measure, so it borrows one page width and slides in from the same side.
    */
   const turnPage = useCallback(
     async (direction) => {
       const rendition = renditionRef.current;
-      if (!rendition || turningRef.current) return;
-      const go = () => (direction === 'next' ? rendition.next() : rendition.prev());
+      if (!rendition) return;
+      const container = hostRef.current?.querySelector('.epub-container');
+      const token = ++turnRef.current;
+      closeMenu();
+      // A turn arriving mid-slide takes over: drop the old one where it stands.
+      if (container) clearSlide(container);
 
+      const go = () => (direction === 'next' ? rendition.next() : rendition.prev());
       const animate =
         settingsRef.current.pageAnimation !== false &&
         settingsRef.current.flow === 'paginated' &&
         !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-      if (!animate) {
+      if (!animate || !container) {
         await go().catch(() => {});
         return;
       }
 
-      turningRef.current = true;
-      closeMenu();
-      setTurn(direction);
-      const swapped = new Promise((resolve) => setTimeout(resolve, TURN_SWAP_MS));
-      try {
-        await swapped;
-        await go().catch(() => {});
-        await new Promise((resolve) => setTimeout(resolve, TURN_MS - TURN_SWAP_MS));
-      } finally {
-        setTurn(null);
-        turningRef.current = false;
-      }
+      const fromView = container.firstElementChild;
+      const fromScroll = container.scrollLeft;
+      await go().catch(() => {});
+      if (token !== turnRef.current || !container.isConnected) return;
+
+      const sectionChanged = container.firstElementChild !== fromView;
+      const scrolled = sectionChanged ? 0 : container.scrollLeft - fromScroll;
+      const pageWidth = rendition.manager?.layout?.delta || container.offsetWidth;
+      // Nothing moved and nothing loaded: the book has no page that way.
+      if (!scrolled && !sectionChanged) return;
+      const shift = scrolled || (direction === 'next' ? pageWidth : -pageWidth);
+
+      await slidePages(container, shift, TURN_MS);
+      if (token === turnRef.current && container.isConnected) clearSlide(container);
     },
     [closeMenu],
   );
@@ -328,11 +412,32 @@ const EpubView = forwardRef(function EpubView(
         return frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
       };
 
+      /**
+       * The slice of this section the reader can see, in the iframe's own
+       * coordinates. epub.js gives the iframe the width of the whole chapter
+       * and scrolls a clipping container across it, so without this the page in
+       * front of you is indistinguishable from the six columns beside it.
+       */
+      const visibleBox = () => {
+        const frame = doc.defaultView?.frameElement;
+        const container = frame?.closest?.('.epub-container');
+        if (!frame || !container) return null;
+        const inner = frame.getBoundingClientRect();
+        const outer = container.getBoundingClientRect();
+        return {
+          left: outer.left - inner.left,
+          top: outer.top - inner.top,
+          right: outer.right - inner.left,
+          bottom: outer.bottom - inner.top,
+        };
+      };
+
       detachers.set(
         doc,
         attachDragHighlighter({
           doc,
           isEnabled: () => highlighterRef.current,
+          visibleBox,
           onPreview: (rects) => {
             if (!rects) {
               setPreview(null);
@@ -480,6 +585,10 @@ const EpubView = forwardRef(function EpubView(
         rendition.on('touchend', (event) => {
           const start = touchRef.current;
           touchRef.current = null;
+          // While the highlighter is on, a drag across the page is a highlight
+          // and nothing else — reading it as a swipe is what used to carry the
+          // page away just as the mark was made.
+          if (highlighterRef.current) return;
           if (!start || settingsRef.current.flow === 'scrolled') return;
           const touch = event.changedTouches?.[0];
           if (!touch) return;
@@ -492,6 +601,9 @@ const EpubView = forwardRef(function EpubView(
         });
 
         rendition.on('click', (event, contents) => {
+          // Taps belong to the highlighter in highlighter mode; it turns the
+          // page itself, and letting this fire too turned two at a time.
+          if (highlighterRef.current) return;
           if (Date.now() - markClickRef.current < 350) return;
           if (contents.window?.getSelection()?.toString().trim()) return;
           if (menuOpenRef.current) {
@@ -663,16 +775,12 @@ const EpubView = forwardRef(function EpubView(
   const menuHighlight =
     menu?.mode === 'edit' ? highlights.find((h) => h.id === menu.id) || null : null;
 
-  const hostClass = ['epub-host', turn ? `is-turning-${turn}` : '']
-    .filter(Boolean)
-    .join(' ');
-
   return (
     <div
       className={highlighterOn ? 'epub-host-wrap is-highlighting' : 'epub-host-wrap'}
       style={{ padding: `2.5% ${settings.margin}%` }}
     >
-      <div ref={hostRef} className={hostClass} />
+      <div ref={hostRef} className="epub-host" />
 
       {preview && (
         <div className="drag-preview" aria-hidden="true">

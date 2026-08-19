@@ -683,15 +683,37 @@ const EpubView = forwardRef(function EpubView(
           // Taps belong to the highlighter in highlighter mode; it turns the
           // page itself, and letting this fire too turned two at a time.
           if (highlighterRef.current) return;
+          // The mark's own handler already dealt with it.
           if (Date.now() - markClickRef.current < 350) return;
+
+          const frame = contents.document?.defaultView?.frameElement;
+          const offset = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+          const x = (event.clientX ?? 0) + offset.left;
+          const y = (event.clientY ?? 0) + offset.top;
+
+          /*
+           * A tap on a highlight should never have got this far — epub.js puts a
+           * click handler on the mark itself. But the mark lives in a pane that
+           * is pointer-events:none, and WebKit honours that for the whole
+           * subtree where Chromium lets the rectangle inside it through. So on
+           * iOS the tap falls past the mark, into the frame, and arrives here as
+           * an ordinary tap on the page. Measuring the marks answers in either
+           * engine, which is why it is done before anything else.
+           */
+          const mark = markAt(x, y);
+          if (mark) {
+            markClickRef.current = Date.now();
+            if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
+            else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+            return;
+          }
+
           if (contents.window?.getSelection()?.toString().trim()) return;
           if (menuOpenRef.current) {
             closeMenu();
             return;
           }
-          const frame = contents.document?.defaultView?.frameElement;
-          const offsetLeft = frame ? frame.getBoundingClientRect().left : 0;
-          handleTap((event.clientX ?? 0) + offsetLeft);
+          handleTap(x);
         });
 
         rendition.on('keyup', (event) => {
@@ -832,7 +854,7 @@ const EpubView = forwardRef(function EpubView(
    * the same call the drag makes, in the same order, so a failure here is a
    * failure there.
    */
-  const selfTest = useCallback(() => {
+  const selfTest = useCallback(async () => {
     const steps = [];
     const add = (name, ok, detail = '') => steps.push({ name, ok, detail });
 
@@ -908,8 +930,54 @@ const EpubView = forwardRef(function EpubView(
     } catch (err) {
       add('anchored to the book', false, String(err?.message || err));
     }
+
+    /*
+     * The page turn, measured the same way: turn a page for real and watch
+     * whether anything moved over time. "The animation is switched off" and
+     * "the animation ran and the browser did not paint it" look identical from
+     * the sofa and are entirely different faults.
+     */
+    const wanted = settingsRef.current.pageAnimation !== false;
+    add('page-turn animation switched on', wanted, wanted ? '' : 'turn it on in reading settings');
+    const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    add(
+      'system allows motion',
+      !reduced,
+      reduced ? 'Reduce Motion is on in iOS Accessibility — animations are skipped on purpose' : '',
+    );
+    add(
+      'paginated',
+      settingsRef.current.flow === 'paginated',
+      settingsRef.current.flow === 'paginated' ? '' : 'continuous scroll has no page turn',
+    );
+
+    if (wanted && !reduced && settingsRef.current.flow === 'paginated') {
+      const container = hostRef.current?.querySelector('.epub-container');
+      const view = container?.firstElementChild;
+      if (container && view) {
+        const before = container.scrollLeft;
+        const seen = new Set();
+        const sample = setInterval(() => {
+          seen.add(window.getComputedStyle(view).transform || 'none');
+        }, 25);
+        await turnPage('next');
+        clearInterval(sample);
+        const turned = container.scrollLeft !== before;
+        add('a page actually turned', turned, `scroll ${before} → ${container.scrollLeft}`);
+        const frames = [...seen].filter((value) => value && value !== 'none');
+        add(
+          'the slide was animated',
+          frames.length > 1,
+          frames.length > 1
+            ? `${frames.length} distinct positions`
+            : 'the page arrived without moving through anything',
+        );
+        // Put the reader back where they were.
+        await turnPage('prev');
+      }
+    }
     return steps;
-  }, [highlighterOn]);
+  }, [highlighterOn, turnPage]);
 
   useImperativeHandle(
     ref,

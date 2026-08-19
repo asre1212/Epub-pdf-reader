@@ -43,9 +43,18 @@ export default function DiagnosticsSheet({ format, onSelfTest, onClose, notify }
     downloadText(`highlighter-diagnostics-${stamp}.txt`, report());
   };
 
-  const run = () => {
-    const result = onSelfTest?.();
-    setSteps(result || [{ name: 'self-test available', ok: false, detail: 'not supported here' }]);
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    try {
+      const result = await onSelfTest?.();
+      setSteps(result || [{ name: 'self-test available', ok: false, detail: 'not supported here' }]);
+    } catch (err) {
+      setSteps([{ name: 'self-test ran', ok: false, detail: String(err?.message || err) }]);
+    } finally {
+      setRunning(false);
+    }
   };
 
   return (
@@ -69,8 +78,8 @@ export default function DiagnosticsSheet({ format, onSelfTest, onClose, notify }
 
         {format === 'epub' && (
           <>
-            <button type="button" className="btn" onClick={run}>
-              {steps ? 'Run the self-test again' : 'Run the self-test'}
+            <button type="button" className="btn" onClick={run} disabled={running}>
+              {running ? 'Running…' : steps ? 'Run the self-test again' : 'Run the self-test'}
             </button>
             {steps && (
               <ol className="diag-steps">

@@ -31,7 +31,7 @@ function Segmented({ options, value, onChange, label }) {
   );
 }
 
-export default function SettingsSheet({ format, settings, onChange, onClose }) {
+export default function SettingsSheet({ format, settings, onChange, onDiagnostics, onClose }) {
   const isEpub = format === 'epub';
   const set = (patch) => onChange(patch);
 
@@ -233,6 +233,11 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
         </label>
 
         <div className="sheet-actions">
+          {onDiagnostics && (
+            <button type="button" className="btn btn-quiet" onClick={onDiagnostics}>
+              Highlighter diagnostics
+            </button>
+          )}
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done
           </button>

@@ -14,7 +14,7 @@ function where(highlight) {
  * Rendering it whenever notes are on screen means the browser's own Print
  * command produces the same document as the Export button.
  */
-export default function NotesPrintSheet({ groups, total }) {
+export default function NotesPrintSheet({ groups, total, unit = 'book' }) {
   const exported = new Date().toLocaleDateString(undefined, {
     day: 'numeric',
     month: 'long',
@@ -26,17 +26,17 @@ export default function NotesPrintSheet({ groups, total }) {
       <header className="printsheet-head">
         <h1>Highlights</h1>
         <p>
-          {total} highlight{total === 1 ? '' : 's'} across {groups.length} book
+          {total} highlight{total === 1 ? '' : 's'} across {groups.length} {unit}
           {groups.length === 1 ? '' : 's'} · {exported}
         </p>
       </header>
 
       {groups.map((group) => (
-        <section key={group.book.id} className="printsheet-book">
-          <h2>{group.book.title}</h2>
-          {group.book.author && <p className="printsheet-author">{group.book.author}</p>}
+        <section key={group.id} className="printsheet-book">
+          <h2>{group.title}</h2>
+          {group.subtitle && <p className="printsheet-author">{group.subtitle}</p>}
 
-          {group.highlights.map((highlight) => (
+          {group.entries.map(({ highlight, book }) => (
             <div
               key={highlight.id}
               className="printnote"
@@ -45,7 +45,15 @@ export default function NotesPrintSheet({ groups, total }) {
               <p className="printnote-text">{highlight.text}</p>
               {highlight.note && <p className="printnote-note">{highlight.note}</p>}
               <p className="printnote-meta">
-                {[colorLabel(highlight.color), where(highlight)].filter(Boolean).join(' · ')}
+                {[
+                  colorLabel(highlight.color),
+                  where(highlight),
+                  // Under a project heading the book is the missing half of the
+                  // citation; under a book heading it is already overhead.
+                  group.kind !== 'book' ? book?.title : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </p>
             </div>
           ))}

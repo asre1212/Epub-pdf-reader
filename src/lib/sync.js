@@ -8,6 +8,9 @@ import {
   pruneTombstones,
   putBook,
   putHighlight,
+  listProjects,
+  putProject,
+  deleteProject,
   setPref,
   updateBook,
 } from './db.js';
@@ -84,9 +87,10 @@ function bookByFingerprint(books) {
  * to be placed on a device that has not imported that book yet.
  */
 async function collectChanges(since) {
-  const [books, highlights, tombstones] = await Promise.all([
+  const [books, highlights, projects, tombstones] = await Promise.all([
     listBooks(),
     listHighlights(),
+    listProjects(),
     listTombstones(),
   ]);
   const booksById = new Map(books.map((b) => [b.id, b]));
@@ -127,9 +131,21 @@ async function collectChanges(since) {
     });
   }
 
+  for (const project of projects) {
+    const changedAt = project.updatedAt || project.createdAt || 0;
+    if (changedAt <= since) continue;
+    records.push({
+      id: `pj:${project.id}`,
+      clientAt: changedAt,
+      value: { kind: 'project', project: { ...project, updatedAt: changedAt } },
+    });
+  }
+
   for (const grave of tombstones) {
     if (grave.deletedAt <= since) continue;
-    records.push({ id: `hl:${grave.id}`, clientAt: grave.deletedAt, deleted: true });
+    // Tombstones written before projects existed can only be highlights.
+    const prefix = grave.kind === 'project' ? 'pj' : 'hl';
+    records.push({ id: `${prefix}:${grave.id}`, clientAt: grave.deletedAt, deleted: true });
   }
 
   return records;
@@ -183,18 +199,41 @@ async function applyHighlight(value, books, existingById) {
   return 1;
 }
 
+/**
+ * A project is only a name, so the newer name wins outright. A project that
+ * arrives because a highlight was filed into it is created on the spot: the
+ * alternative is a note that knows where it belongs and a device that does not.
+ */
+async function applyProject(value, projectsById) {
+  const incoming = value.project;
+  if (!incoming?.id) return 0;
+  const local = projectsById.get(incoming.id);
+  if (local && (local.updatedAt || local.createdAt || 0) >= (incoming.updatedAt || 0)) return 0;
+  const saved = await putProject(incoming);
+  projectsById.set(saved.id, saved);
+  return 1;
+}
+
 async function applyIncoming(records, key) {
   const books = await listBooks();
   const existing = await listHighlights();
   const existingById = new Map(existing.map((h) => [h.id, h]));
+  const projectsById = new Map((await listProjects()).map((p) => [p.id, p]));
   let applied = 0;
 
   for (const record of records) {
     try {
       if (record.deleted) {
         const id = record.id.slice(3);
-        if (existingById.has(id)) {
+        if (record.id.startsWith('pj:')) {
+          if (!projectsById.has(id)) continue;
           // remote: this device is learning about the deletion, not making it
+          await deleteProject(id, { remote: true });
+          projectsById.delete(id);
+          applied += 1;
+          continue;
+        }
+        if (existingById.has(id)) {
           await deleteHighlight(id, { remote: true });
           existingById.delete(id);
           applied += 1;
@@ -203,6 +242,7 @@ async function applyIncoming(records, key) {
       }
       const value = await decryptRecord(key, record.payload);
       if (value.kind === 'position') applied += await applyPosition(value, books);
+      else if (value.kind === 'project') applied += await applyProject(value, projectsById);
       else if (value.kind === 'highlight') applied += await applyHighlight(value, books, existingById);
     } catch (err) {
       // One unreadable record must not stop the rest. The usual cause is a

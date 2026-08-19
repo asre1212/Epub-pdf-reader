@@ -5,16 +5,27 @@ function locationLabel(highlight) {
   return highlight.chapter || '';
 }
 
+/**
+ * The line under a highlight: its colour, where it sits, and — when the section
+ * heading is not already the book — which book it came from. Grouped by
+ * project, a section mixes books, and a quotation with no source is useless.
+ */
+function metaFor(entry, group) {
+  const parts = [colorLabel(entry.highlight.color), locationLabel(entry.highlight)];
+  if (group.kind !== 'book' && entry.book) parts.push(entry.book.title);
+  return parts.filter(Boolean).join(' · ');
+}
+
 export function highlightsToMarkdown(groups) {
   const out = ['# Highlights', ''];
   for (const group of groups) {
-    out.push(`## ${group.book.title}`);
-    if (group.book.author) out.push(`*${group.book.author}*`);
+    out.push(`## ${group.title}`);
+    if (group.subtitle) out.push(`*${group.subtitle}*`);
     out.push('');
-    for (const h of group.highlights) {
-      const where = locationLabel(h);
+    for (const entry of group.entries) {
+      const h = entry.highlight;
       out.push(`> ${h.text.replace(/\n+/g, '\n> ')}`);
-      const tags = [colorLabel(h.color), where].filter(Boolean).join(' · ');
+      const tags = metaFor(entry, group);
       if (tags) out.push(`\n— ${tags}`);
       if (h.note) out.push(`\n**Note:** ${h.note}`);
       out.push('');
@@ -27,14 +38,14 @@ export function highlightsToMarkdown(groups) {
 export function highlightsToText(groups) {
   const out = [];
   for (const group of groups) {
-    out.push(group.book.title.toUpperCase());
-    if (group.book.author) out.push(group.book.author);
-    out.push('-'.repeat(Math.min(60, Math.max(group.book.title.length, 8))));
+    out.push(group.title.toUpperCase());
+    if (group.subtitle) out.push(group.subtitle);
+    out.push('-'.repeat(Math.min(60, Math.max(group.title.length, 8))));
     out.push('');
-    for (const h of group.highlights) {
+    for (const entry of group.entries) {
+      const h = entry.highlight;
       out.push(`"${h.text}"`);
-      const where = locationLabel(h);
-      const tags = [colorLabel(h.color), where].filter(Boolean).join(' · ');
+      const tags = metaFor(entry, group);
       if (tags) out.push(`   ${tags}`);
       if (h.note) out.push(`   Note: ${h.note}`);
       out.push('');

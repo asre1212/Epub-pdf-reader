@@ -29,7 +29,7 @@ export default function NotesExportSheet({
   const stamp = new Date().toISOString().slice(0, 10);
   const scope = filtered ? `the ${shown} highlight${shown === 1 ? '' : 's'} shown` : 'every highlight';
 
-  const flatHighlights = groups.flatMap((group) => group.highlights);
+  const flatHighlights = groups.flatMap((group) => group.entries.map((e) => e.highlight));
 
   const saveBackup = async () => {
     setBusy('backup');
@@ -55,6 +55,12 @@ export default function NotesExportSheet({
       const parts = [];
       if (report.restored) {
         parts.push(`${report.restored} highlight${report.restored === 1 ? '' : 's'} restored`);
+      }
+      if (report.refiled) {
+        parts.push(`${report.refiled} put back into ${report.refiled === 1 ? 'its' : 'their'} project`);
+      }
+      if (report.projects) {
+        parts.push(`${report.projects} project${report.projects === 1 ? '' : 's'}`);
       }
       if (report.skipped) parts.push(`${report.skipped} already here`);
       if (report.placeholders.length) {

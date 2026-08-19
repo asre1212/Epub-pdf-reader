@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SettingsSheet from './SettingsSheet.jsx';
+import DiagnosticsSheet from './DiagnosticsSheet.jsx';
 import TocDrawer from './TocDrawer.jsx';
 import { HIGHLIGHT_COLORS, colorHex } from '../lib/highlightColors.js';
 import { getBookFile, newId } from '../lib/db.js';
@@ -28,6 +29,7 @@ export default function Reader({
   const [chrome, setChrome] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc, setShowToc] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   // A per-session mode rather than a saved setting: it suppresses scrolling and
   // text selection, so it should not be a surprise the next time a book opens.
   const [highlighterOn, setHighlighterOn] = useState(false);
@@ -68,14 +70,15 @@ export default function Reader({
   useEffect(() => {
     const onKey = (event) => {
       if (event.key !== 'Escape') return;
-      if (showSettings) setShowSettings(false);
+      if (showDiagnostics) setShowDiagnostics(false);
+      else if (showSettings) setShowSettings(false);
       else if (showToc) setShowToc(false);
       else if (highlighterOn) setHighlighterOn(false);
       else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showSettings, showToc, highlighterOn, onClose]);
+  }, [showDiagnostics, showSettings, showToc, highlighterOn, onClose]);
 
   // Optional wake lock, released whenever the reader is hidden or closed.
   useEffect(() => {
@@ -261,6 +264,7 @@ export default function Reader({
               onProgress={onProgress}
               onMeta={handleMeta}
               onToggleChrome={toggleChrome}
+              onShowDiagnostics={() => setShowDiagnostics(true)}
               highlighterOn={highlighterOn}
               notify={notify}
             />
@@ -307,8 +311,16 @@ export default function Reader({
           format={book.format}
           settings={settings}
           onChange={onChangeSettings}
+          onDiagnostics={() => {
+            setShowSettings(false);
+            setShowDiagnostics(true);
+          }}
           onClose={() => setShowSettings(false)}
         />
+      )}
+
+      {showDiagnostics && (
+        <DiagnosticsSheet notify={notify} onClose={() => setShowDiagnostics(false)} />
       )}
 
       {showToc && (

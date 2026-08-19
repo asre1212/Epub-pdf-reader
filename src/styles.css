@@ -198,6 +198,25 @@ button {
   max-width: 55%;
 }
 
+.field-small {
+  padding: 5px 8px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+/* Present to a screen reader, absent to everyone else. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -234,6 +253,19 @@ button {
 
 .btn-ghost {
   background: none;
+}
+
+/* Sits beside a primary action without competing with it. */
+.btn-quiet {
+  margin-right: auto;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.btn-quiet:hover {
+  color: var(--fg);
+  border-color: var(--line);
 }
 
 .btn-small {
@@ -522,7 +554,28 @@ button {
 }
 
 .notepad-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
   margin: 0 0 12px;
+}
+
+.notepad-summary p {
+  margin: 0;
+}
+
+.notepad-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Unfiled is a holding pen, not a project, and reads as one. */
+.note-group.is-unfiled .note-group-title strong {
+  color: var(--fg-muted);
+  font-style: italic;
 }
 
 .note-group {
@@ -668,6 +721,83 @@ button {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.note-project {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- projects */
+
+.project-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.project-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-confirm {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.danger-btn {
+  border-color: #8c2b2b;
+  color: #8c2b2b;
+}
+
+.name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.name-field .field {
+  flex: none;
 }
 
 .note-quote {
@@ -1436,6 +1566,77 @@ button {
 
 .toast-error {
   background: #8c2b2b;
+}
+
+/* --------------------------------------------------- highlighter diagnostics */
+
+.diag-empty {
+  margin: 14px 0;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.diag-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.diag-entry {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diag-entry.is-highlighted {
+  border-left-color: #1d6b45;
+}
+
+.diag-entry.is-missed,
+.diag-entry.is-no-cfi,
+.diag-entry.is-cfi-threw,
+.diag-entry.is-no-rects {
+  border-left-color: #8c2b2b;
+}
+
+.diag-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.diag-head span {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.diag-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+}
+
+.diag-env {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
 }
 
 /* ------------------------------------------------------------ app updates */

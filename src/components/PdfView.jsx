@@ -13,6 +13,7 @@ import NoteDialog from './NoteDialog.jsx';
 import { closePdf, openPdf } from '../lib/pdf.js';
 import { hitTest, normalizeSelectionRects } from '../lib/pdfRects.js';
 import { attachDragHighlighter } from '../lib/dragHighlight.js';
+import { recordTrace } from '../lib/highlighterTrace.js';
 import { colorHex } from '../lib/highlightColors.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
@@ -32,6 +33,7 @@ const PdfView = forwardRef(function PdfView(
     onProgress,
     onMeta,
     onToggleChrome,
+    onShowDiagnostics,
     highlighterOn,
     notify,
   },
@@ -423,9 +425,19 @@ const PdfView = forwardRef(function PdfView(
             })),
           },
         ),
-      onCommit: ({ range, text }) => {
+      onCommit: ({ range, text, trace }) => {
         const rects = normalizeSelectionRects(range, pageBoxes());
-        if (!rects.length) return;
+        const close = (outcome, anchored) => {
+          if (!trace || trace.outcome !== undefined) return;
+          trace.outcome = outcome;
+          recordTrace({ ...trace, anchored, view: 'pdf', flow: settings.flow });
+        };
+        if (!rects.length) {
+          close('no-rects', false);
+          notify('That passage could not be placed on the page.', 'error');
+          return;
+        }
+        close('highlighted', true);
         saveHighlight({ rects, text, color: settings.defaultColor });
       },
       // A tap while the highlighter is on still lands on the page, so it is the
@@ -447,7 +459,10 @@ const PdfView = forwardRef(function PdfView(
           reason === 'no-text-found'
             ? 'Could not read the text on this page to highlight it.'
             : 'No text under that drag — try across a line.',
+          'error',
+          onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
         ),
+      onTrace: (entry) => recordTrace({ ...entry, view: 'pdf', flow: settings.flow }),
     });
   }, [
     highlighterOn,
@@ -457,6 +472,8 @@ const PdfView = forwardRef(function PdfView(
     highlightAt,
     eraseHighlight,
     onToggleChrome,
+    onShowDiagnostics,
+    settings.flow,
     notify,
   ]);
 

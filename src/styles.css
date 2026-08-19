@@ -2069,6 +2069,25 @@ button {
   background: transparent;
 }
 
+/*
+ * One of these sits over each highlight. epub.js detects taps on its own marks
+ * by listening inside the book's iframe, which is the one place a touch never
+ * arrives on iOS, so the tap has to be taken out here instead. They are only as
+ * big as the highlights themselves: everywhere else the page is left alone and
+ * text can still be selected.
+ */
+.epub-mark-hit {
+  position: fixed;
+  z-index: 35;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* The stage keeps the gesture while highlighting instead of scrolling. */
 .epub-host-wrap.is-highlighting,
 .pdf-scroll.is-highlighting {

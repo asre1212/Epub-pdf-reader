@@ -47,11 +47,12 @@ inside epub.js's iframe, which is where it was heard until an iPhone reported
 dozens of failed highlights and not one recorded gesture. The text is still
 measured inside the frame; only the listening moved out.
 
-Tapping a highlight is measured against the marks' own rectangles rather than
-hit-tested. epub.js paints them into a pane that is `pointer-events: none`, and
-where Chromium lets a tap through to the rectangle inside it, WebKit honours
-that for the whole subtree — so on iOS the tap fell past the highlight and was
-read as an ordinary tap on the page.
+Tapping a highlight is answered by a small target of the app's own, laid over
+each mark in the top-level document. epub.js detects taps on its own marks by
+listening inside the book's iframe and matching coordinates, which is precisely
+the place a touch never arrives on iOS — the same fault as the highlighter, and
+it needed the same answer. The targets are only as big as the highlights, so
+text everywhere else can still be selected.
 
 If a drag ever fails to highlight, *Highlighter diagnostics* at the foot of the
 settings sheet has two halves. The self-test runs the whole highlight pipeline

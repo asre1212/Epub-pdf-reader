@@ -173,10 +173,16 @@ const EpubView = forwardRef(function EpubView(
   // for the listener bound to the top-level document while it is up.
   const catcherRef = useRef(null);
   const dragDetachRef = useRef(null);
+  // Counts events that actually arrive inside the book's frame, so a device can
+  // say whether anything in there is heard at all.
+  const witnessRef = useRef({ click: 0, touchstart: 0, touchend: 0 });
+  const witnessedDocs = useRef(new WeakSet());
   // Bumped on every turn so an animation still running can tell it was replaced.
   const turnRef = useRef(0);
   const [preview, setPreview] = useState(null);
 
+  const [markBoxes, setMarkBoxes] = useState([]);
+  const [layoutTick, setLayoutTick] = useState(0);
   const [status, setStatus] = useState('loading');
   const [menu, setMenu] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
@@ -211,6 +217,43 @@ const EpubView = forwardRef(function EpubView(
   // current eraser through a ref rather than capturing yesterday's.
   const eraseRef = useRef(eraseHighlight);
   eraseRef.current = eraseHighlight;
+
+  /**
+   * Where every highlight sits on screen, in viewport coordinates.
+   *
+   * This exists because epub.js cannot be relied on to tell us a highlight was
+   * tapped. It builds its mark pane over the iframe and then detects taps by
+   * listening *inside* the iframe and matching coordinates — the one place this
+   * app has proven a touch never arrives on iOS. So the marks are measured out
+   * here, and a plain element in the top-level document is put over each one.
+   */
+  const measureMarks = useCallback(() => {
+    const host = hostRef.current;
+    if (!host) {
+      setMarkBoxes([]);
+      return;
+    }
+    const boxes = [];
+    for (const mark of host.querySelectorAll(`.${HIGHLIGHT_CLASS}[data-id]`)) {
+      const id = mark.dataset.id;
+      // A highlight spanning lines is a group of rectangles, and the gaps
+      // between them are not part of it.
+      const parts = mark.children.length ? [...mark.children] : [mark];
+      for (const part of parts) {
+        const box = part.getBoundingClientRect();
+        if (box.width < 1 || box.height < 1) continue;
+        boxes.push({
+          id,
+          key: `${id}-${boxes.length}`,
+          left: box.left,
+          top: box.top,
+          width: box.width,
+          height: box.height,
+        });
+      }
+    }
+    setMarkBoxes(boxes);
+  }, []);
 
   /**
    * The highlight under a point on screen.
@@ -628,12 +671,26 @@ const EpubView = forwardRef(function EpubView(
         rendition.on('relocated', (location) => {
           closeMenu();
           reportLocation(location);
+          setLayoutTick((tick) => tick + 1);
         });
 
         rendition.on('rendered', () => {
           drawnRef.current.clear();
           paintHighlights(true);
           applyMode(highlighterRef.current);
+          setLayoutTick((tick) => tick + 1);
+          // Count what reaches the frame, whoever ends up acting on it.
+          for (const contents of rendition.getContents() || []) {
+            const doc = contents?.document;
+            if (!doc || witnessedDocs.current.has(doc)) continue;
+            witnessedDocs.current.add(doc);
+            for (const type of ['click', 'touchstart', 'touchend']) {
+              doc.addEventListener(type, () => { witnessRef.current[type] += 1; }, {
+                passive: true,
+                capture: true,
+              });
+            }
+          }
           const pending = pendingFocusRef.current;
           if (pending) {
             pendingFocusRef.current = null;
@@ -801,10 +858,37 @@ const EpubView = forwardRef(function EpubView(
     if (status === 'ready') paintHighlights(false);
   }, [highlights, status, paintHighlights]);
 
+  // Marks are painted by epub.js after a layout it does not announce
+  // synchronously, so measure on the next frame rather than in the same one.
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    const frame = requestAnimationFrame(measureMarks);
+    return () => cancelAnimationFrame(frame);
+  }, [highlights, status, layoutTick, settings, measureMarks]);
+
+  // In a continuously scrolled book the marks move under the finger, and a
+  // target left where a highlight used to be is worse than none at all.
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    const container = hostRef.current?.querySelector('.epub-container');
+    if (!container) return undefined;
+    let frame = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measureMarks);
+    };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      container.removeEventListener('scroll', onScroll);
+    };
+  }, [status, settings.flow, measureMarks]);
+
   useEffect(() => {
     const onResize = () => {
       closeMenu();
       paintHighlights(true);
+      setLayoutTick((tick) => tick + 1);
     };
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
@@ -937,6 +1021,18 @@ const EpubView = forwardRef(function EpubView(
      * "the animation ran and the browser did not paint it" look identical from
      * the sofa and are entirely different faults.
      */
+    const heard = witnessRef.current;
+    const anyHeard = heard.click + heard.touchstart + heard.touchend > 0;
+    add(
+      'taps heard inside the page itself',
+      anyHeard,
+      anyHeard
+        ? `click ${heard.click}, touchstart ${heard.touchstart}, touchend ${heard.touchend}`
+        : 'none since this book opened — if you have tapped the page, nothing in the frame is ' +
+          'heard, and tapping to turn a page cannot work either. Tap the middle of the page a ' +
+          'few times, then run this again.',
+    );
+
     const wanted = settingsRef.current.pageAnimation !== false;
     add('page-turn animation switched on', wanted, wanted ? '' : 'turn it on in reading settings');
     const reduced = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
@@ -1025,6 +1121,40 @@ const EpubView = forwardRef(function EpubView(
         because inside the iframe on iOS the touch was never heard.
       */}
       {highlighterOn && <div ref={catcherRef} className="epub-catcher" />}
+
+      {/*
+        One target per highlight, in the top-level document. Only these small
+        rectangles take the touch; everywhere else the page is untouched, so
+        selecting text still works. While the highlighter is on the catcher above
+        already answers for taps, and these would only be in its way.
+      */}
+      {!highlighterOn &&
+        markBoxes.map((box) => (
+          <button
+            key={box.key}
+            type="button"
+            className="epub-mark-hit"
+            style={{
+              left: `${box.left}px`,
+              top: `${box.top}px`,
+              width: `${box.width}px`,
+              height: `${box.height}px`,
+            }}
+            aria-label="Edit this highlight"
+            onClick={() => {
+              markClickRef.current = Date.now();
+              if (settingsRef.current.tapToErase) {
+                eraseHighlight(box.id);
+                return;
+              }
+              setMenu({
+                mode: 'edit',
+                id: box.id,
+                rect: { left: box.left, top: box.top, width: box.width, height: box.height },
+              });
+            }}
+          />
+        ))}
 
       {preview && (
         <div className="drag-preview" aria-hidden="true">

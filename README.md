@@ -24,19 +24,23 @@ a file you already have is detected by content hash rather than duplicated.
 
 **Reading** — select any text and a colour picker appears right next to it; one tap
 saves the highlight. Tap an existing highlight to recolour it, attach a note, copy
-it, or remove it. The contents drawer lists both the table of contents and the
-highlights you have made in the book so far.
+it, or remove it — or turn on *Tap a highlight to erase it* in settings and a tap
+removes it there and then, with an undo on the message that follows. The contents
+drawer lists both the table of contents and the highlights you have made in the
+book so far.
 
 **Highlighter mode** — the pen button in the reader bar. Turn it on and drag a
 finger across text: the passage highlights as you go, snapped to whole words, in
 whichever colour the strip below the bar has selected. No long press, no
-selection handles. Taps still turn the page while it is on, and scrolling is
-suspended so a drag is never mistaken for a scroll — press *Done*, or Escape, to
-go back to normal. It works in both EPUBs and PDFs.
+selection handles. A drag belongs to the highlighter alone while it is on —
+nothing else reads it as a swipe or a scroll — and only the text on the page in
+front of you can be caught, never a column waiting off-screen. Taps still turn
+the page, and tapping a highlight still edits or erases it. Press *Done*, or
+Escape, to go back to normal. It works in both EPUBs and PDFs.
 
-Page turns slide and fade rather than cutting; *Animate page turns* in settings
-turns that off, and it is skipped anyway when the system asks for reduced
-motion.
+Page turns slide the page across rather than cutting to the next one; *Animate
+page turns* in settings turns that off, and it is skipped anyway when the system
+asks for reduced motion.
 
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,
 typeface, letter spacing, justification, page margin, and how pages scroll:

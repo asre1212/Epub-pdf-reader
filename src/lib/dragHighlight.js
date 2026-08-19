@@ -16,6 +16,10 @@
  *    selection UI is suppressed by preventing the default on the touch instead.
  *  - The gesture is tracked with Touch events rather than Pointer events, which
  *    have a patchy history inside iframes on iOS.
+ *
+ * It also takes the gesture rather than sharing it. While a drag is running the
+ * events are stopped where they are caught, so nothing downstream — epub.js's
+ * swipe-to-turn above all — gets a second reading of the same finger.
  */
 
 const WORD = /[\p{L}\p{N}'’-]/u;
@@ -39,24 +43,42 @@ function caretFromApi(doc, x, y) {
   return null;
 }
 
+/** The whole of `doc`'s own viewport, used when nothing narrower is offered. */
+function fullViewport(doc) {
+  const view = doc.defaultView;
+  if (!view) return null;
+  return { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+}
+
+function intersects(rect, box, margin = 0) {
+  return (
+    rect.right >= box.left - margin &&
+    rect.left <= box.right + margin &&
+    rect.bottom >= box.top - margin &&
+    rect.top <= box.bottom + margin
+  );
+}
+
 /**
- * A map of every visible word to where it sits on screen.
+ * A map of every word on the page to where it sits on screen.
  *
  * This is the fallback when the caret APIs refuse, and it deliberately uses no
  * hit-testing API at all — not `caretRangeFromPoint`, not `elementFromPoint`.
  * Inside epub.js's iframe on WebKit those return nothing, which left dragging
  * dead with no way to recover. Measured `Range` geometry always works.
  *
- * Only text within the viewport is measured, so in a paginated book this is the
- * page in front of you rather than the chapter. Built once per drag: nothing can
- * scroll while the highlighter owns the gesture, so the rectangles stay true.
+ * `box` is the slice of the document the reader can actually see, in the same
+ * coordinates as a touch inside it. It matters more than it looks: epub.js
+ * stretches its iframe to hold *every* column of a chapter and then scrolls the
+ * container over it, so the document is many pages wide and "in the iframe" is
+ * nothing like "on the page". Without the box, the nearest word to a finger near
+ * the edge of the page can be one in the next column, off-screen — a highlight
+ * over text the reader never saw. Built once per drag: nothing can scroll while
+ * the highlighter owns the gesture, so the rectangles stay true.
  */
-function buildWordIndex(doc) {
+function buildWordIndex(doc, box) {
   const view = doc.defaultView;
   if (!doc.body || !view) return [];
-  const width = view.innerWidth;
-  const height = view.innerHeight;
-  const margin = 120;
   const words = [];
   const probe = doc.createRange();
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
@@ -69,8 +91,10 @@ function buildWordIndex(doc) {
     probe.selectNodeContents(node);
     const bounds = probe.getBoundingClientRect();
     if (!bounds.width && !bounds.height) continue;
-    if (bounds.bottom < -margin || bounds.top > height + margin) continue;
-    if (bounds.right < -margin || bounds.left > width + margin) continue;
+    // A paragraph flowing across columns reports one union rectangle spanning
+    // all of them, so this only rejects text nowhere near the page; the
+    // per-word rectangles below are what actually decide.
+    if (!intersects(bounds, box, 160)) continue;
 
     for (let i = 0; i < text.length; ) {
       while (i < text.length && !WORD.test(text[i])) i += 1;
@@ -81,12 +105,34 @@ function buildWordIndex(doc) {
       probe.setStart(node, i);
       probe.setEnd(node, end);
       for (const rect of probe.getClientRects()) {
-        if (rect.width || rect.height) words.push({ node, start: i, end, rect });
+        if (!rect.width && !rect.height) continue;
+        if (!intersects(rect, box)) continue;
+        words.push({ node, start: i, end, rect });
       }
       i = end;
     }
   }
   return words;
+}
+
+/**
+ * The word index for a drag: the visible page first, the whole document as a
+ * last resort. Coming back empty is what produces "could not read this page",
+ * so the fallback is worth the extra pass — a highlight anchored oddly beats a
+ * gesture that does nothing.
+ */
+function indexForDrag(doc, box) {
+  const viewport = fullViewport(doc);
+  const page = box || viewport;
+  if (page) {
+    const words = buildWordIndex(doc, page);
+    if (words.length) return words;
+  }
+  if (viewport && page !== viewport) {
+    const words = buildWordIndex(doc, viewport);
+    if (words.length) return words;
+  }
+  return buildWordIndex(doc, { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity });
 }
 
 /** Distance from a point to a rectangle, zero when inside it. */
@@ -117,8 +163,30 @@ function caretFromIndex(doc, index, x, y) {
   return range;
 }
 
-export function caretRangeAt(doc, x, y, index) {
-  return caretFromApi(doc, x, y) || (index ? caretFromIndex(doc, index, x, y) : null);
+/** Is this caret somewhere the reader can actually see? */
+function caretIsVisible(range, box) {
+  if (!box) return true;
+  try {
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height && !rect.left && !rect.top) return true;
+    return intersects(rect, box, 4);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The caret under a point. The browser's own hit-test comes first, but its
+ * answer is only trusted when it lands on the visible page: asked about a point
+ * in the gutter between columns it will happily return a caret in the next
+ * column, which is off-screen. The measured word index is both the fallback for
+ * when the API refuses and the correction for when it overreaches.
+ */
+export function caretRangeAt(doc, x, y, index, box) {
+  const api = caretFromApi(doc, x, y);
+  if (api && caretIsVisible(api, box)) return api;
+  const measured = index ? caretFromIndex(doc, index, x, y) : null;
+  return measured || api || null;
 }
 
 /** A Range spanning two collapsed carets, whichever order they were made in. */
@@ -177,6 +245,7 @@ export function attachDragHighlighter({
   doc,
   isEnabled,
   containerFor,
+  visibleBox,
   onPreview,
   onCommit,
   onTap,
@@ -188,6 +257,8 @@ export function attachDragHighlighter({
   let dragging = false;
   let active = false;
   let index = null;
+  let box = null;
+  let handledAt = 0; // when the highlighter last finished a gesture
 
   const reset = () => {
     anchor = null;
@@ -196,6 +267,7 @@ export function attachDragHighlighter({
     dragging = false;
     active = false;
     index = null;
+    box = null;
   };
 
   const clearNativeSelection = () => {
@@ -210,8 +282,9 @@ export function attachDragHighlighter({
     if (!isEnabled()) return false;
     if (containerFor && !containerFor(target)) return false;
     // Measured once per drag; the page cannot move while we hold the gesture.
-    index = buildWordIndex(doc);
-    anchor = caretRangeAt(doc, x, y, index);
+    box = visibleBox?.() || fullViewport(doc);
+    index = indexForDrag(doc, box);
+    anchor = caretRangeAt(doc, x, y, index, box);
     origin = { x, y };
     latest = null;
     dragging = false;
@@ -227,11 +300,12 @@ export function attachDragHighlighter({
     // The caret may not have resolved at touch-down — over a margin, say — so
     // keep trying until the finger reaches something addressable.
     if (!anchor) {
-      anchor = caretRangeAt(doc, origin.x, origin.y, index) || caretRangeAt(doc, x, y, index);
+      anchor =
+        caretRangeAt(doc, origin.x, origin.y, index, box) || caretRangeAt(doc, x, y, index, box);
     }
     if (!anchor) return true;
 
-    const focus = caretRangeAt(doc, x, y, index);
+    const focus = caretRangeAt(doc, x, y, index, box);
     if (!focus) return true;
     const range = rangeBetween(doc, anchor, focus);
     if (!range) return true;
@@ -242,12 +316,13 @@ export function attachDragHighlighter({
 
   const finish = (x, y) => {
     if (!active) return;
+    handledAt = Date.now();
     const wasDragging = dragging;
     const start = origin;
     let range = latest;
 
     if (wasDragging && anchor && Number.isFinite(x)) {
-      const focus = caretRangeAt(doc, x, y, index);
+      const focus = caretRangeAt(doc, x, y, index, box);
       const fresh = focus && rangeBetween(doc, anchor, focus);
       if (fresh) range = snapToWords(fresh);
     }
@@ -274,6 +349,20 @@ export function attachDragHighlighter({
 
   /* ------------------------------------------------------------ touch path */
 
+  /**
+   * Take the gesture off everyone else.
+   *
+   * `preventDefault` alone is not enough. It stops the browser scrolling and
+   * selecting, but every other listener still runs — and in the EPUB view those
+   * belong to epub.js, which reads the same drag as a swipe and turns the page.
+   * That is what made highlighting look broken: the mark was made and then the
+   * page it was on slid away. Claiming the gesture outright is the fix.
+   */
+  const claim = (event) => {
+    event.stopPropagation();
+    if (event.cancelable) event.preventDefault();
+  };
+
   const onTouchStart = (event) => {
     if (event.touches.length > 1) {
       cancel();
@@ -283,7 +372,7 @@ export function attachDragHighlighter({
     if (!begin(touch.clientX, touch.clientY, event.target)) return;
     // Stops iOS starting its own selection, magnifier and callout. The content
     // stays selectable so caret hit-testing keeps working.
-    if (event.cancelable) event.preventDefault();
+    claim(event);
   };
 
   const onTouchMove = (event) => {
@@ -293,13 +382,14 @@ export function attachDragHighlighter({
       return;
     }
     const touch = event.touches[0];
-    if (move(touch.clientX, touch.clientY) && event.cancelable) event.preventDefault();
+    move(touch.clientX, touch.clientY);
+    claim(event);
   };
 
   const onTouchEnd = (event) => {
     if (!active) return;
     const touch = event.changedTouches[0];
-    if (event.cancelable) event.preventDefault();
+    claim(event);
     finish(touch?.clientX, touch?.clientY);
   };
 
@@ -307,14 +397,34 @@ export function attachDragHighlighter({
 
   const onMouseDown = (event) => {
     if (event.button !== 0) return;
-    if (begin(event.clientX, event.clientY, event.target)) event.preventDefault();
+    if (begin(event.clientX, event.clientY, event.target)) claim(event);
   };
 
   const onMouseMove = (event) => {
-    if (move(event.clientX, event.clientY)) event.preventDefault();
+    if (!active) return;
+    move(event.clientX, event.clientY);
+    claim(event);
   };
 
-  const onMouseUp = (event) => finish(event.clientX, event.clientY);
+  const onMouseUp = (event) => {
+    if (!active) return;
+    claim(event);
+    finish(event.clientX, event.clientY);
+  };
+
+  // A press that the highlighter handled must not also arrive as a click: in a
+  // paginated book that second life is a page turn.
+  const onClick = (event) => {
+    // A touch whose default was prevented never produces a click at all, so
+    // this expires on time rather than on the click that may never come.
+    if (Date.now() - handledAt > 700) return;
+    // Only inside the readable area: a quick tap on the toolbar right after a
+    // highlight is a different intent and has to land.
+    if (containerFor && !containerFor(event.target)) return;
+    handledAt = 0;
+    event.stopPropagation();
+    event.preventDefault();
+  };
 
   const capture = true;
   const active_ = { passive: false, capture: true };
@@ -325,7 +435,8 @@ export function attachDragHighlighter({
   doc.addEventListener('touchcancel', cancel, capture);
   doc.addEventListener('mousedown', onMouseDown, active_);
   doc.addEventListener('mousemove', onMouseMove, active_);
-  doc.addEventListener('mouseup', onMouseUp, capture);
+  doc.addEventListener('mouseup', onMouseUp, active_);
+  doc.addEventListener('click', onClick, active_);
 
   return () => {
     doc.removeEventListener('touchstart', onTouchStart, active_);
@@ -334,7 +445,8 @@ export function attachDragHighlighter({
     doc.removeEventListener('touchcancel', cancel, capture);
     doc.removeEventListener('mousedown', onMouseDown, active_);
     doc.removeEventListener('mousemove', onMouseMove, active_);
-    doc.removeEventListener('mouseup', onMouseUp, capture);
+    doc.removeEventListener('mouseup', onMouseUp, active_);
+    doc.removeEventListener('click', onClick, active_);
     reset();
   };
 }

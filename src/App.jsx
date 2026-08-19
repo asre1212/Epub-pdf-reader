@@ -20,6 +20,7 @@ import {
   listBooks,
   listHighlights,
   putHighlight,
+  restoreHighlight as dbRestoreHighlight,
   updateBook,
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
@@ -48,11 +49,22 @@ export default function App() {
   const lastSyncAttempt = useRef(0);
   const update = useUpdateState();
 
-  const notify = useCallback((message, tone = 'info') => {
-    const id = ++toastId.current;
-    setToasts((list) => [...list, { id, message, tone }]);
-    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 4200);
+  const dismissToast = useCallback((id) => {
+    setToasts((list) => list.filter((t) => t.id !== id));
   }, []);
+
+  /**
+   * `action` is an optional { label, onAct } shown as a button on the toast —
+   * how an undo is offered for something that happened without asking.
+   */
+  const notify = useCallback(
+    (message, tone = 'info', action = null) => {
+      const id = ++toastId.current;
+      setToasts((list) => [...list, { id, message, tone, action }]);
+      setTimeout(() => dismissToast(id), action ? 7000 : 4200);
+    },
+    [dismissToast],
+  );
 
   /* ------------------------------------------------------------- bootstrap */
 
@@ -300,6 +312,16 @@ export default function App() {
     [scheduleSync],
   );
 
+  const undeleteHighlight = useCallback(
+    async (highlight) => {
+      const saved = await dbRestoreHighlight(highlight);
+      setHighlights((list) => [...list.filter((h) => h.id !== saved.id), saved]);
+      scheduleSync();
+      return saved;
+    },
+    [scheduleSync],
+  );
+
   const editHighlight = useCallback(
     async (id, patch) => {
       const next = await dbUpdateHighlight(id, patch);
@@ -425,6 +447,7 @@ export default function App() {
           onAddHighlight={addHighlight}
           onEditHighlight={editHighlight}
           onDeleteHighlight={removeHighlight}
+          onUndeleteHighlight={undeleteHighlight}
           onProgress={patchBook}
           notify={notify}
         />
@@ -455,7 +478,7 @@ export default function App() {
         </div>
       )}
 
-      <Toasts toasts={toasts} />
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

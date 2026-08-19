@@ -137,6 +137,24 @@ export async function putHighlight(highlight) {
   return record;
 }
 
+/**
+ * Puts a deleted highlight back, tombstone and all.
+ *
+ * A plain `putHighlight` is not enough to undo a delete: the tombstone survives
+ * it and the next sync would faithfully broadcast the deletion to every device,
+ * including this one. The record is stamped as written now so it also wins
+ * against any copy of the deletion already in flight.
+ */
+export async function restoreHighlight(highlight) {
+  const record = { ...highlight, updatedAt: Date.now() };
+  const db = await getDB();
+  const tx = db.transaction(['highlights', 'tombstones'], 'readwrite');
+  tx.objectStore('tombstones').delete(record.id);
+  tx.objectStore('highlights').put(record);
+  await tx.done;
+  return record;
+}
+
 export async function updateHighlight(id, patch) {
   const db = await getDB();
   const tx = db.transaction('highlights', 'readwrite');

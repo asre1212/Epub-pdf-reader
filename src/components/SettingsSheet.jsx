@@ -212,6 +212,20 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
         <label className="toggle toggle-row">
           <input
             type="checkbox"
+            checked={!!settings.tapToErase}
+            onChange={(e) => set({ tapToErase: e.target.checked })}
+          />
+          <span>Tap a highlight to erase it</span>
+        </label>
+        <p className="set-hint">
+          {settings.tapToErase
+            ? 'Tapping a highlight removes it straight away, with an undo on the message that follows.'
+            : 'Tapping a highlight opens its colours, note and delete button.'}
+        </p>
+
+        <label className="toggle toggle-row">
+          <input
+            type="checkbox"
             checked={settings.keepAwake}
             onChange={(e) => set({ keepAwake: e.target.checked })}
           />

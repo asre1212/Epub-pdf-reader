@@ -114,6 +114,53 @@ function slidePages(container, shift, ms) {
   });
 }
 
+/**
+ * Slides the page by scrolling, which is how epub.js moves it anyway.
+ *
+ * The transform version below animates an element that contains the book's
+ * iframe, and WebKit is famously reluctant to keep compositing an iframe under
+ * an animating ancestor. Scrolling has no such problem here for the plainest of
+ * reasons: an instant scroll is exactly what a page turn already is, so the new
+ * position demonstrably paints. This just walks there instead of jumping.
+ *
+ * epub.js reports the reading position from its `scrolled` event, which it
+ * debounces 20ms past the last movement — so it fires once, after this has
+ * finished, at the position that is actually correct.
+ */
+function slideScroll(container, from, to, ms, isCurrent, onStop) {
+  return new Promise((resolve) => {
+    if (from === to) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const settle = () => {
+      if (done) return;
+      done = true;
+      container.scrollLeft = to;
+      onStop?.(null);
+      resolve();
+    };
+    onStop?.(settle);
+
+    const startedAt = performance.now();
+    container.scrollLeft = from;
+    const step = (now) => {
+      if (done) return;
+      if (!isCurrent() || !container.isConnected) {
+        settle();
+        return;
+      }
+      const t = Math.min(1, (now - startedAt) / ms);
+      const eased = 1 - (1 - t) ** 3;
+      container.scrollLeft = from + (to - from) * eased;
+      if (t < 1) requestAnimationFrame(step);
+      else settle();
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 function clearSlide(container) {
   for (const view of container?.children || []) {
     view.style.transition = '';
@@ -179,6 +226,9 @@ const EpubView = forwardRef(function EpubView(
   const witnessedDocs = useRef(new WeakSet());
   // Bumped on every turn so an animation still running can tell it was replaced.
   const turnRef = useRef(0);
+  // Lands an in-flight scroll slide immediately, so the next turn starts from a
+  // position that is settled rather than halfway.
+  const slideStopRef = useRef(null);
   const [preview, setPreview] = useState(null);
 
   const [markBoxes, setMarkBoxes] = useState([]);
@@ -402,7 +452,10 @@ const EpubView = forwardRef(function EpubView(
       const container = hostRef.current?.querySelector('.epub-container');
       const token = ++turnRef.current;
       closeMenu();
-      // A turn arriving mid-slide takes over: drop the old one where it stands.
+      // A turn arriving mid-slide takes over: land the old one first, so what
+      // this one reads as the current position is the settled one.
+      slideStopRef.current?.();
+      slideStopRef.current = null;
       if (container) clearSlide(container);
 
       const go = () => (direction === 'next' ? rendition.next() : rendition.prev());
@@ -426,8 +479,24 @@ const EpubView = forwardRef(function EpubView(
       const pageWidth = rendition.manager?.layout?.delta || container.offsetWidth;
       // Nothing moved and nothing loaded: the book has no page that way.
       if (!scrolled && !sectionChanged) return;
-      const shift = scrolled || (direction === 'next' ? pageWidth : -pageWidth);
+      // Inside a chapter the turn is a scroll, so it can be replayed as one.
+      // Crossing into a new chapter is not — there is nothing behind the new
+      // page to scroll away from — so that one still travels by transform.
+      if (!sectionChanged && scrolled) {
+        await slideScroll(
+          container,
+          fromScroll,
+          fromScroll + scrolled,
+          TURN_MS,
+          () => token === turnRef.current,
+          (stop) => {
+            slideStopRef.current = stop;
+          },
+        );
+        return;
+      }
 
+      const shift = scrolled || (direction === 'next' ? pageWidth : -pageWidth);
       await slidePages(container, shift, TURN_MS);
       if (token === turnRef.current && container.isConnected) clearSlide(container);
     },

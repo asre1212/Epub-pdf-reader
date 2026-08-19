@@ -47,6 +47,12 @@ inside epub.js's iframe, which is where it was heard until an iPhone reported
 dozens of failed highlights and not one recorded gesture. The text is still
 measured inside the frame; only the listening moved out.
 
+Tapping a highlight is measured against the marks' own rectangles rather than
+hit-tested. epub.js paints them into a pane that is `pointer-events: none`, and
+where Chromium lets a tap through to the rectangle inside it, WebKit honours
+that for the whole subtree — so on iOS the tap fell past the highlight and was
+read as an ordinary tap on the page.
+
 If a drag ever fails to highlight, *Highlighter diagnostics* at the foot of the
 settings sheet has two halves. The self-test runs the whole highlight pipeline
 on the page behind it without anyone touching the screen, so it answers even
@@ -54,8 +60,10 @@ when no gesture registers at all. Below it are the gestures that did arrive — 
 touches arrived, how much text could be measured on the page, whether a range
 was built and whether it could be anchored to the book. An empty gesture list
 after a drag is itself the finding: the touch is not reaching the highlighter.
-The failure message offers a *Why?* button that opens the same screen, and
-*Copy all* or *Save file* hands the lot over for a bug report. It exists because the highlighter runs inside
+The self-test also turns a page and watches it, because "the animation is off"
+and "the animation ran and was not painted" look identical from the sofa. The
+failure message offers a *Why?* button that opens the same screen, and *Copy
+all* or *Save file* hands the lot over for a bug report. It exists because the highlighter runs inside
 an iframe on a phone, where none of that is visible from the outside.
 
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,

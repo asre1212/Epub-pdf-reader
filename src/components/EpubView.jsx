@@ -4,6 +4,7 @@ import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { colorHex } from '../lib/highlightColors.js';
 import { HIGHLIGHTER_CSS, attachDragHighlighter } from '../lib/dragHighlight.js';
+import { recordTrace } from '../lib/highlighterTrace.js';
 import { FONT_STACKS, THEMES } from '../lib/settings.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
@@ -139,6 +140,7 @@ const EpubView = forwardRef(function EpubView(
     onProgress,
     onMeta,
     onToggleChrome,
+    onShowDiagnostics,
     highlighterOn,
     notify,
   },
@@ -412,6 +414,14 @@ const EpubView = forwardRef(function EpubView(
         return frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
       };
 
+      // A range can be perfect and still fail to become a highlight, so the
+      // trace is closed here rather than when the drag ended.
+      const report = (trace, outcome, extra) => {
+        if (!trace || trace.outcome !== undefined) return;
+        trace.outcome = outcome;
+        recordTrace({ ...trace, ...extra, view: 'epub', flow: settingsRef.current.flow });
+      };
+
       /**
        * The slice of this section the reader can see, in the iframe's own
        * coordinates. epub.js gives the iframe the width of the whole chapter
@@ -454,15 +464,21 @@ const EpubView = forwardRef(function EpubView(
               })),
             });
           },
-          onCommit: ({ range, text }) => {
+          onCommit: ({ range, text, trace }) => {
             try {
               const cfiRange = contents.cfiFromRange(range);
-              if (!cfiRange) return;
+              if (!cfiRange) {
+                report(trace, 'no-cfi', { anchored: false });
+                notify('That passage could not be anchored to the book.', 'error');
+                return;
+              }
+              report(trace, 'highlighted', { anchored: true });
               // href is left out: saveHighlight falls back to the location on
               // screen, which is the section this drag happened in.
               saveHighlight({ cfiRange, text, color: settingsRef.current.defaultColor });
             } catch (err) {
               console.warn('Could not anchor that highlight', err);
+              report(trace, 'cfi-threw', { anchored: false, error: String(err?.message || err) });
               notify('That passage could not be highlighted.', 'error');
             }
           },
@@ -471,17 +487,22 @@ const EpubView = forwardRef(function EpubView(
             const offset = frameRect();
             handleTap(x + offset.left);
           },
-          // Never fail silently: a drag that caught no text should say so.
+          // Never fail silently: a drag that caught no text should say so, and
+          // should offer the trace rather than leaving the reader to guess.
           onMiss: (reason) =>
             notify(
               reason === 'no-text-found'
                 ? 'Could not read the text on this page to highlight it.'
                 : 'No text under that drag — try across a line.',
+              'error',
+              onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
             ),
+          onTrace: (entry) =>
+            recordTrace({ ...entry, view: 'epub', flow: settingsRef.current.flow }),
         }),
       );
     },
-    [handleTap, notify, saveHighlight],
+    [handleTap, notify, onShowDiagnostics, saveHighlight],
   );
 
   const applyMode = useCallback(

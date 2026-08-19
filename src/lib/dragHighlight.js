@@ -121,18 +121,55 @@ function buildWordIndex(doc, box) {
  * so the fallback is worth the extra pass — a highlight anchored oddly beats a
  * gesture that does nothing.
  */
-function indexForDrag(doc, box) {
+function indexForDrag(doc, box, tiers = {}) {
   const viewport = fullViewport(doc);
   const page = box || viewport;
   if (page) {
     const words = buildWordIndex(doc, page);
+    tiers.page = words.length;
     if (words.length) return words;
   }
   if (viewport && page !== viewport) {
     const words = buildWordIndex(doc, viewport);
+    tiers.viewport = words.length;
     if (words.length) return words;
   }
-  return buildWordIndex(doc, { left: -Infinity, top: -Infinity, right: Infinity, bottom: Infinity });
+  const words = buildWordIndex(doc, {
+    left: -Infinity,
+    top: -Infinity,
+    right: Infinity,
+    bottom: Infinity,
+  });
+  tiers.all = words.length;
+  return words;
+}
+
+/** How many text nodes the page has at all — zero means there was nothing to read. */
+function countTextNodes(doc) {
+  if (!doc.body) return 0;
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  let count = 0;
+  while (walker.nextNode()) count += 1;
+  return count;
+}
+
+/**
+ * Whatever the browser selected on its own during the gesture.
+ *
+ * On iOS the system may run its own selection underneath ours however firmly we
+ * decline it. If our own hit-testing came back with nothing, that selection is
+ * the reader's intent expressed through a different mechanism, and throwing it
+ * away to report a failure would be perverse.
+ */
+function nativeSelectionRange(doc) {
+  try {
+    const selection = doc.getSelection?.();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    return range.toString().trim() ? range : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Distance from a point to a rectangle, zero when inside it. */
@@ -250,6 +287,7 @@ export function attachDragHighlighter({
   onCommit,
   onTap,
   onMiss,
+  onTrace,
 }) {
   let anchor = null;
   let origin = null;
@@ -259,6 +297,7 @@ export function attachDragHighlighter({
   let index = null;
   let box = null;
   let handledAt = 0; // when the highlighter last finished a gesture
+  let trace = null;
 
   const reset = () => {
     anchor = null;
@@ -278,12 +317,32 @@ export function attachDragHighlighter({
     }
   };
 
-  const begin = (x, y, target) => {
+  const begin = (x, y, target, pointer) => {
     if (!isEnabled()) return false;
     if (containerFor && !containerFor(target)) return false;
     // Measured once per drag; the page cannot move while we hold the gesture.
     box = visibleBox?.() || fullViewport(doc);
-    index = indexForDrag(doc, box);
+    const tiers = {};
+    index = indexForDrag(doc, box, tiers);
+    trace = {
+      pointer,
+      events: { start: 1, move: 0, end: 0, cancelable: null },
+      index: tiers,
+      doc: {
+        innerWidth: doc.defaultView?.innerWidth,
+        innerHeight: doc.defaultView?.innerHeight,
+        frameWidth: doc.defaultView?.frameElement?.getBoundingClientRect?.().width ?? 0,
+        frameHeight: doc.defaultView?.frameElement?.getBoundingClientRect?.().height ?? 0,
+        textNodes: countTextNodes(doc),
+      },
+      stage: {
+        box: box
+          ? `${Math.round(box.left)},${Math.round(box.top)} → ${Math.round(box.right)},${Math.round(box.bottom)}`
+          : 'none',
+      },
+      caretApi: !!(doc.caretRangeFromPoint || doc.caretPositionFromPoint),
+      caretApiHit: !!caretFromApi(doc, x, y),
+    };
     anchor = caretRangeAt(doc, x, y, index, box);
     origin = { x, y };
     latest = null;
@@ -295,6 +354,7 @@ export function attachDragHighlighter({
 
   const move = (x, y) => {
     if (!active) return false;
+    if (trace) trace.events.move += 1;
     if (!dragging && Math.hypot(x - origin.x, y - origin.y) < DRAG_SLOP) return false;
     dragging = true;
     // The caret may not have resolved at touch-down — over a margin, say — so
@@ -319,27 +379,61 @@ export function attachDragHighlighter({
     handledAt = Date.now();
     const wasDragging = dragging;
     const start = origin;
+    const report = trace;
     let range = latest;
+    let focus = null;
 
     if (wasDragging && anchor && Number.isFinite(x)) {
-      const focus = caretRangeAt(doc, x, y, index, box);
+      focus = caretRangeAt(doc, x, y, index, box);
       const fresh = focus && rangeBetween(doc, anchor, focus);
       if (fresh) range = snapToWords(fresh);
     }
+
+    // Last resort: if our own reading of the page produced nothing but the
+    // browser selected something anyway, take the browser's answer.
+    const native = range ? null : nativeSelectionRange(doc);
+    if (native) range = snapToWords(native);
+
     // Why it failed, if it did — the difference between "we could not read the
     // page" and "you dragged across a margin" is the whole diagnosis.
     const reason = !index?.length ? 'no-text-found' : !anchor ? 'no-anchor' : 'empty-range';
+    const text = range?.toString().replace(/\s+/g, ' ').trim();
+
+    if (report) {
+      report.events.end = 1;
+      report.anchor = !!anchor;
+      report.focus = !!focus;
+      report.textLength = text?.length || 0;
+      report.text = text ? text.slice(0, 60) : '';
+      if (native) report.nativeSelection = `used, ${text?.length || 0} chars`;
+    }
+
     reset();
+    trace = null;
     onPreview(null);
     clearNativeSelection();
 
     if (!wasDragging) {
+      if (report) emitTrace(report, 'tap');
       onTap?.(start.x, start.y);
       return;
     }
-    const text = range?.toString().replace(/\s+/g, ' ').trim();
-    if (range && text) onCommit({ range, text });
-    else onMiss?.(reason);
+    if (range && text) {
+      // `anchored` is filled in by onCommit: a range can be perfect and still
+      // fail to become a highlight, and those are different bugs.
+      onCommit({ range, text, trace: report });
+      if (report && report.outcome === undefined) emitTrace(report, 'highlighted');
+    } else {
+      if (report) emitTrace(report, 'missed', reason);
+      onMiss?.(reason);
+    }
+  };
+
+  const emitTrace = (report, outcome, reason) => {
+    if (!onTrace || report.outcome !== undefined) return;
+    report.outcome = outcome;
+    if (reason) report.reason = reason;
+    onTrace(report);
   };
 
   const cancel = () => {
@@ -369,9 +463,11 @@ export function attachDragHighlighter({
       return;
     }
     const touch = event.touches[0];
-    if (!begin(touch.clientX, touch.clientY, event.target)) return;
+    if (!begin(touch.clientX, touch.clientY, event.target, 'touch')) return;
     // Stops iOS starting its own selection, magnifier and callout. The content
-    // stays selectable so caret hit-testing keeps working.
+    // stays selectable so caret hit-testing keeps working. Whether the touch was
+    // cancelable at all is worth knowing: if it was not, iOS kept the gesture.
+    if (trace) trace.events.cancelable = event.cancelable;
     claim(event);
   };
 
@@ -397,7 +493,7 @@ export function attachDragHighlighter({
 
   const onMouseDown = (event) => {
     if (event.button !== 0) return;
-    if (begin(event.clientX, event.clientY, event.target)) claim(event);
+    if (begin(event.clientX, event.clientY, event.target, 'mouse')) claim(event);
   };
 
   const onMouseMove = (event) => {

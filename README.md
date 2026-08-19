@@ -42,6 +42,14 @@ Page turns slide the page across rather than cutting to the next one; *Animate
 page turns* in settings turns that off, and it is skipped anyway when the system
 asks for reduced motion.
 
+If a drag ever fails to highlight, *Highlighter diagnostics* at the foot of the
+settings sheet records what the last few gestures actually did — whether the
+touches arrived, how much text could be measured on the page, whether a range
+was built and whether it could be anchored to the book. The failure message
+itself offers a *Why?* button that opens the same screen, and *Copy all* puts it
+on the clipboard for a bug report. It exists because the highlighter runs inside
+an iframe on a phone, where none of that is visible from the outside.
+
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,
 typeface, letter spacing, justification, page margin, and how pages scroll:
 page turns or one continuous column for EPUBs, snap-to-page or continuous scroll

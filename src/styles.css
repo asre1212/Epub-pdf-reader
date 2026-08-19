@@ -236,6 +236,19 @@ button {
   background: none;
 }
 
+/* Sits beside a primary action without competing with it. */
+.btn-quiet {
+  margin-right: auto;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.btn-quiet:hover {
+  color: var(--fg);
+  border-color: var(--line);
+}
+
 .btn-small {
   padding: 5px 11px;
   font-size: 13px;
@@ -1436,6 +1449,77 @@ button {
 
 .toast-error {
   background: #8c2b2b;
+}
+
+/* --------------------------------------------------- highlighter diagnostics */
+
+.diag-empty {
+  margin: 14px 0;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.diag-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.diag-entry {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diag-entry.is-highlighted {
+  border-left-color: #1d6b45;
+}
+
+.diag-entry.is-missed,
+.diag-entry.is-no-cfi,
+.diag-entry.is-cfi-threw,
+.diag-entry.is-no-rects {
+  border-left-color: #8c2b2b;
+}
+
+.diag-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.diag-head span {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.diag-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+}
+
+.diag-env {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
 }
 
 /* ------------------------------------------------------------ app updates */

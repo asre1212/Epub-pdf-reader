@@ -38,9 +38,13 @@ front of you can be caught, never a column waiting off-screen. Taps still turn
 the page, and tapping a highlight still edits or erases it. Press *Done*, or
 Escape, to go back to normal. It works in both EPUBs and PDFs.
 
-Page turns slide the page across rather than cutting to the next one; *Animate
-page turns* in settings turns that off, and it is skipped anyway when the system
-asks for reduced motion.
+Page turns slide the page across rather than cutting to the next one. Inside a
+chapter that slide is a scroll, because a page turn already is one and the
+browser is therefore known to paint it; only crossing into a new chapter, where
+there is nothing behind the page to scroll away from, travels by transform.
+*Animate page turns* in settings turns it off, and it is skipped anyway when the
+system asks for reduced motion — which the settings sheet now says out loud
+rather than leaving the pages to jump with no explanation.
 
 In an EPUB the drag is heard by a transparent sheet over the book rather than
 inside epub.js's iframe, which is where it was heard until an iPhone reported

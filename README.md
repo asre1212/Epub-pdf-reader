@@ -57,9 +57,22 @@ for PDFs. PDFs additionally get a zoom control and a fit-width/fit-page choice.
 Settings apply live and are remembered between sessions.
 
 **Notes tab** — every highlight from every book, grouped by book and sorted by
-title, compiled into a single notepad. Search the text and notes, filter by book
-or colour, show only annotated highlights, and edit notes in place. Tapping a
+reading order, searchable across text and notes. Filter by book, project or
+colour, show only annotated highlights, and edit notes in place. Tapping a
 highlight jumps to it in the book.
+
+**Projects** — folders that cut across books, for when the useful grouping is
+the thing you are working on rather than the book it came from. A highlight sits
+in one project or in none; file it from the picker on any note, or narrow the
+list with the filters and file the whole of it in one move. *Group by project*
+turns the notepad inside out, with whatever is still unsorted collected under
+*Unfiled* at the bottom. Projects are managed from the **Projects** button:
+renaming is in place, and deleting one never deletes what it held — those
+highlights come loose and land back in *Unfiled*. Projects sync between devices
+and travel in backups, and restoring a backup will put a highlight back into its
+project if it is sitting unfiled, so losing a project by accident is
+recoverable. Exports follow whichever grouping is on screen, and under a project
+heading each quotation names the book it came from.
 
 **Export & backup** — the *Export* button covers whatever the current filters
 show, in the order shown:
@@ -166,14 +179,16 @@ if Playwright has not downloaded a browser of its own.
 | --- | --- |
 | `src/App.jsx` | Tab shell, import pipeline, and the single source of truth for books, highlights and settings |
 | `src/components/Library.jsx` | Book grid, search, sort, rename/delete |
-| `src/components/Notes.jsx` | The compiled notepad, filters and export |
+| `src/components/Notes.jsx` | The compiled notepad, grouping by book or project, filters and export |
+| `src/components/ProjectsSheet.jsx` | Making, renaming, reordering and deleting projects |
 | `src/components/Reader.jsx` | Reader chrome: title bar, progress, settings sheet, contents drawer |
 | `src/components/EpubView.jsx` | epub.js rendition, CFI-anchored highlights, typography and flow |
 | `src/components/PdfView.jsx` / `PdfPage.jsx` | pdf.js canvas + selectable text layer, lazy page rendering, rect-anchored highlights |
-| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
+| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `projects`, `prefs`, `tombstones` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
 | `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |
+| `src/lib/highlighterTrace.js` / `components/DiagnosticsSheet.jsx` | What each highlighter gesture did, for diagnosing a device you cannot reach |
 | `src/lib/backup.js` | Building, parsing and merging notes backups |
 | `src/lib/sync.js` / `syncCrypto.js` | Cross-device sync: key derivation, encryption, and the push/pull round |
 | `worker/` | The Cloudflare Worker and D1 schema behind sync |

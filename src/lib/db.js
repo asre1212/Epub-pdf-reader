@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'marginalia';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /**
  * Object stores:
@@ -9,10 +9,12 @@ const DB_VERSION = 2;
  *   files      — the raw EPUB/PDF blob, keyed by book id, kept separate so the
  *                library list can be read without pulling megabytes into memory
  *   highlights — every highlight, indexed by book
+ *   projects   — reader-made folders that cut across books; a highlight names
+ *                one through `projectId`, or none and it is unfiled
  *   prefs      — reader settings and other small key/value state
- *   tombstones — ids of deleted highlights, so a deletion can be synced. Without
- *                them a delete on one device is undone by the next sync from the
- *                other, which still has the highlight.
+ *   tombstones — ids of deleted highlights and projects, so a deletion can be
+ *                synced. Without them a delete on one device is undone by the
+ *                next sync from the other, which still has the record.
  */
 let dbPromise;
 
@@ -32,6 +34,10 @@ function getDB() {
           const hl = db.createObjectStore('highlights', { keyPath: 'id' });
           hl.createIndex('bookId', 'bookId');
           hl.createIndex('createdAt', 'createdAt');
+        }
+        if (!db.objectStoreNames.contains('projects')) {
+          const projects = db.createObjectStore('projects', { keyPath: 'id' });
+          projects.createIndex('order', 'order');
         }
         if (!db.objectStoreNames.contains('prefs')) {
           db.createObjectStore('prefs');
@@ -181,11 +187,101 @@ export async function deleteHighlight(id, { remote = false } = {}) {
   if (!remote) {
     tx.objectStore('tombstones').put({
       id,
+      kind: 'highlight',
       bookId: existing?.bookId ?? null,
       deletedAt: Date.now(),
     });
   }
   await tx.done;
+}
+
+/* --------------------------------------------------------------- projects */
+
+/**
+ * Projects are the reader's own filing, so they keep the order they were put
+ * in rather than being sorted for them. `order` is only a hint: ties fall back
+ * to the name so a list built on two devices still reads the same.
+ */
+export async function listProjects() {
+  const projects = await (await getDB()).getAll('projects');
+  return projects.sort(
+    (a, b) =>
+      (a.order ?? 0) - (b.order ?? 0) ||
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  );
+}
+
+export async function putProject(project) {
+  const record = {
+    order: 0,
+    createdAt: Date.now(),
+    ...project,
+    name: (project.name || '').trim(),
+    updatedAt: project.updatedAt ?? Date.now(),
+  };
+  await (await getDB()).put('projects', record);
+  return record;
+}
+
+export async function updateProject(id, patch) {
+  const db = await getDB();
+  const tx = db.transaction('projects', 'readwrite');
+  const existing = await tx.store.get(id);
+  if (!existing) {
+    await tx.done;
+    return null;
+  }
+  const next = { ...existing, ...patch, updatedAt: Date.now() };
+  if (typeof next.name === 'string') next.name = next.name.trim();
+  await tx.store.put(next);
+  await tx.done;
+  return next;
+}
+
+/**
+ * Removes a project and unfiles what was in it.
+ *
+ * Deleting a folder must never delete what it held: the highlights are the
+ * reader's work and the project is only a label on it. The highlights are
+ * stamped as changed so the other devices learn they came loose, rather than
+ * quietly refiling them the next time they sync.
+ */
+export async function deleteProject(id, { remote = false } = {}) {
+  const db = await getDB();
+  const tx = db.transaction(['projects', 'highlights', 'tombstones'], 'readwrite');
+  tx.objectStore('projects').delete(id);
+
+  const highlights = tx.objectStore('highlights');
+  const freed = [];
+  for await (const cursor of highlights.iterate()) {
+    if (cursor.value.projectId !== id) continue;
+    const next = { ...cursor.value, projectId: null, updatedAt: Date.now() };
+    cursor.update(next);
+    freed.push(next);
+  }
+
+  if (!remote) {
+    tx.objectStore('tombstones').put({ id, kind: 'project', deletedAt: Date.now() });
+  }
+  await tx.done;
+  return freed;
+}
+
+/** Files several highlights at once — the only bearable way to sort a backlog. */
+export async function assignProject(highlightIds, projectId) {
+  const db = await getDB();
+  const tx = db.transaction('highlights', 'readwrite');
+  const wanted = new Set(highlightIds);
+  const changed = [];
+  for (const id of wanted) {
+    const existing = await tx.store.get(id);
+    if (!existing || existing.projectId === (projectId || null)) continue;
+    const next = { ...existing, projectId: projectId || null, updatedAt: Date.now() };
+    tx.store.put(next);
+    changed.push(next);
+  }
+  await tx.done;
+  return changed;
 }
 
 export async function listTombstones() {

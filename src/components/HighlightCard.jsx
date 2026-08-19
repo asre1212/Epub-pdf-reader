@@ -8,9 +8,13 @@ function where(highlight) {
 
 export default function HighlightCard({
   highlight,
+  book,
+  projects = [],
+  project,
   onOpen,
   onChangeColor,
   onChangeNote,
+  onChangeProject,
   onDelete,
   onCopy,
 }) {
@@ -79,7 +83,36 @@ export default function HighlightCard({
       )}
 
       <div className="note-foot">
-        <span className="note-where">{where(highlight)}</span>
+        <span className="note-where">
+          {[book?.title, where(highlight)].filter(Boolean).join(' · ')}
+        </span>
+
+        {onChangeProject && (
+          <label className="note-project">
+            <span className="visually-hidden">Project</span>
+            <select
+              className="field field-select field-small"
+              value={project?.id || ''}
+              onChange={(e) => onChangeProject(e.target.value || null)}
+            >
+              <option value="">Unfiled</option>
+              {projects.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.name}
+                </option>
+              ))}
+              {/*
+                A project the reader has not synced yet still names this
+                highlight; showing the raw id would be worse than showing that
+                something is there.
+              */}
+              {highlight.projectId && !project && (
+                <option value={highlight.projectId}>Project not on this device</option>
+              )}
+              <option value="__new__">New project…</option>
+            </select>
+          </label>
+        )}
 
         <div className="note-actions">
           <div className="swatch-row" role="group" aria-label="Highlight colour">

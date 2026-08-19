@@ -3,7 +3,17 @@ import ePub, { EpubCFI } from 'epubjs';
 import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { colorHex } from '../lib/highlightColors.js';
-import { HIGHLIGHTER_CSS, attachDragHighlighter } from '../lib/dragHighlight.js';
+import {
+  HIGHLIGHTER_CSS,
+  attachDragHighlighter,
+  caretFromApi,
+  caretRangeAt,
+  countTextNodes,
+  indexForDrag,
+  rangeBetween,
+  rectsOf,
+  snapToWords,
+} from '../lib/dragHighlight.js';
 import { recordTrace } from '../lib/highlighterTrace.js';
 import { FONT_STACKS, THEMES } from '../lib/settings.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
@@ -159,8 +169,10 @@ const EpubView = forwardRef(function EpubView(
   const settingsRef = useRef(settings);
   const touchRef = useRef(null);
   const highlighterRef = useRef(highlighterOn);
-  // contents.document -> detach function for its drag listener
-  const dragDetachRef = useRef(new Map());
+  // The transparent sheet that hears the highlighter's drags, and the detach
+  // for the listener bound to the top-level document while it is up.
+  const catcherRef = useRef(null);
+  const dragDetachRef = useRef(null);
   // Bumped on every turn so an animation still running can tell it was replaced.
   const turnRef = useRef(0);
   const [preview, setPreview] = useState(null);
@@ -199,6 +211,44 @@ const EpubView = forwardRef(function EpubView(
   // current eraser through a ref rather than capturing yesterday's.
   const eraseRef = useRef(eraseHighlight);
   eraseRef.current = eraseHighlight;
+
+  /**
+   * The highlight under a point on screen.
+   *
+   * While the highlighter is on the catcher covers epub.js's mark pane, so a
+   * tap on a highlight cannot reach it — and no hit-testing API will find it
+   * either: the marks are painted into an SVG pane that is `pointer-events:
+   * none`, so `elementsFromPoint` looks straight through them. Measuring the
+   * rectangles is the only reading that answers.
+   */
+  const markAt = useCallback((x, y) => {
+    const marks = document.querySelectorAll(`.${HIGHLIGHT_CLASS}[data-id]`);
+    // Last drawn sits on top, so it is the one a tap means.
+    for (const mark of [...marks].reverse()) {
+      // A highlight spanning lines is a group of rectangles; its own bounding
+      // box would also swallow the gap between them.
+      const boxes = mark.children.length
+        ? [...mark.children].map((child) => child.getBoundingClientRect())
+        : [mark.getBoundingClientRect()];
+      const hit = boxes.find(
+        (box) => x >= box.left - 2 && x <= box.right + 2 && y >= box.top - 2 && y <= box.bottom + 2,
+      );
+      if (!hit) continue;
+      return {
+        id: mark.dataset.id,
+        rect: { left: hit.left, top: hit.top, width: hit.width, height: hit.height },
+      };
+    }
+    return null;
+  }, []);
+
+  // A range can be flawless and still fail to become a highlight, so a trace is
+  // closed when the mark is saved rather than when the drag ended.
+  const closeTrace = useCallback((trace, outcome, extra) => {
+    if (!trace || trace.outcome !== undefined) return;
+    trace.outcome = outcome;
+    recordTrace({ ...trace, ...extra, view: 'epub', flow: settingsRef.current.flow });
+  }, []);
 
   /* ------------------------------------------------------------- highlights */
 
@@ -385,125 +435,24 @@ const EpubView = forwardRef(function EpubView(
   );
 
   /**
-   * Turns highlighter mode on or off for one rendered section: suppresses the
-   * native selection inside it and listens for drags across its text.
+   * Puts the highlighter's CSS into a rendered section, and takes it out again.
+   *
+   * All this does now is stop iOS offering its callout over the text. The drag
+   * itself is heard somewhere else entirely — see the catcher below.
    */
-  const setContentsMode = useCallback(
-    (contents, on) => {
-      const doc = contents?.document;
-      if (!doc) return;
-      const detachers = dragDetachRef.current;
-
-      if (!on) {
-        doc.getElementById(STYLE_ID)?.remove();
-        detachers.get(doc)?.();
-        detachers.delete(doc);
-        return;
-      }
-
-      if (!doc.getElementById(STYLE_ID)) {
-        const style = doc.createElement('style');
-        style.id = STYLE_ID;
-        style.textContent = HIGHLIGHTER_CSS;
-        doc.head?.appendChild(style);
-      }
-      if (detachers.has(doc)) return;
-
-      const frameRect = () => {
-        const frame = doc.defaultView?.frameElement;
-        return frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
-      };
-
-      // A range can be perfect and still fail to become a highlight, so the
-      // trace is closed here rather than when the drag ended.
-      const report = (trace, outcome, extra) => {
-        if (!trace || trace.outcome !== undefined) return;
-        trace.outcome = outcome;
-        recordTrace({ ...trace, ...extra, view: 'epub', flow: settingsRef.current.flow });
-      };
-
-      /**
-       * The slice of this section the reader can see, in the iframe's own
-       * coordinates. epub.js gives the iframe the width of the whole chapter
-       * and scrolls a clipping container across it, so without this the page in
-       * front of you is indistinguishable from the six columns beside it.
-       */
-      const visibleBox = () => {
-        const frame = doc.defaultView?.frameElement;
-        const container = frame?.closest?.('.epub-container');
-        if (!frame || !container) return null;
-        const inner = frame.getBoundingClientRect();
-        const outer = container.getBoundingClientRect();
-        return {
-          left: outer.left - inner.left,
-          top: outer.top - inner.top,
-          right: outer.right - inner.left,
-          bottom: outer.bottom - inner.top,
-        };
-      };
-
-      detachers.set(
-        doc,
-        attachDragHighlighter({
-          doc,
-          isEnabled: () => highlighterRef.current,
-          visibleBox,
-          onPreview: (rects) => {
-            if (!rects) {
-              setPreview(null);
-              return;
-            }
-            const offset = frameRect();
-            setPreview({
-              color: colorHex(settingsRef.current.defaultColor),
-              rects: rects.map((r) => ({
-                left: offset.left + r.left,
-                top: offset.top + r.top,
-                width: r.width,
-                height: r.height,
-              })),
-            });
-          },
-          onCommit: ({ range, text, trace }) => {
-            try {
-              const cfiRange = contents.cfiFromRange(range);
-              if (!cfiRange) {
-                report(trace, 'no-cfi', { anchored: false });
-                notify('That passage could not be anchored to the book.', 'error');
-                return;
-              }
-              report(trace, 'highlighted', { anchored: true });
-              // href is left out: saveHighlight falls back to the location on
-              // screen, which is the section this drag happened in.
-              saveHighlight({ cfiRange, text, color: settingsRef.current.defaultColor });
-            } catch (err) {
-              console.warn('Could not anchor that highlight', err);
-              report(trace, 'cfi-threw', { anchored: false, error: String(err?.message || err) });
-              notify('That passage could not be highlighted.', 'error');
-            }
-          },
-          // A press that never moved is still a page turn or a chrome toggle.
-          onTap: (x) => {
-            const offset = frameRect();
-            handleTap(x + offset.left);
-          },
-          // Never fail silently: a drag that caught no text should say so, and
-          // should offer the trace rather than leaving the reader to guess.
-          onMiss: (reason) =>
-            notify(
-              reason === 'no-text-found'
-                ? 'Could not read the text on this page to highlight it.'
-                : 'No text under that drag — try across a line.',
-              'error',
-              onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
-            ),
-          onTrace: (entry) =>
-            recordTrace({ ...entry, view: 'epub', flow: settingsRef.current.flow }),
-        }),
-      );
-    },
-    [handleTap, notify, onShowDiagnostics, saveHighlight],
-  );
+  const setContentsMode = useCallback((contents, on) => {
+    const doc = contents?.document;
+    if (!doc) return;
+    if (!on) {
+      doc.getElementById(STYLE_ID)?.remove();
+      return;
+    }
+    if (doc.getElementById(STYLE_ID)) return;
+    const style = doc.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = HIGHLIGHTER_CSS;
+    doc.head?.appendChild(style);
+  }, []);
 
   const applyMode = useCallback(
     (on) => {
@@ -522,13 +471,122 @@ const EpubView = forwardRef(function EpubView(
     if (!highlighterOn) setPreview(null);
   }, [highlighterOn, status, applyMode]);
 
-  useEffect(
-    () => () => {
-      for (const detach of dragDetachRef.current.values()) detach();
-      dragDetachRef.current.clear();
-    },
-    [],
-  );
+  /**
+   * The catcher: a transparent sheet over the book that hears the drag.
+   *
+   * The highlighter used to listen inside epub.js's iframe, and on iOS the
+   * gesture never arrived — a device reported dozens of failed highlights and
+   * not one recorded gesture, meaning the touch never reached the listener at
+   * all. The PDF view has always listened on the top-level document and has
+   * always worked on the same phone, which leaves the iframe as the only
+   * difference between them.
+   *
+   * So the events are heard out here, where they demonstrably arrive, and the
+   * text is still measured in there, where it lives. `measureIn` carries the
+   * offset between the two.
+   */
+  useEffect(() => {
+    if (!highlighterOn || status !== 'ready') return undefined;
+
+    const detach = attachDragHighlighter({
+      doc: document,
+      containerFor: (target) => target === catcherRef.current,
+      measureIn: () => {
+        const contents = renditionRef.current?.getContents?.()?.[0];
+        const frame = contents?.document?.defaultView?.frameElement;
+        if (!contents?.document || !frame) return null;
+        const rect = frame.getBoundingClientRect();
+        return { doc: contents.document, offsetX: rect.left, offsetY: rect.top };
+      },
+      visibleBox: () => {
+        const contents = renditionRef.current?.getContents?.()?.[0];
+        const frame = contents?.document?.defaultView?.frameElement;
+        const container = frame?.closest?.('.epub-container');
+        if (!frame || !container) return null;
+        const inner = frame.getBoundingClientRect();
+        const outer = container.getBoundingClientRect();
+        return {
+          left: outer.left - inner.left,
+          top: outer.top - inner.top,
+          right: outer.right - inner.left,
+          bottom: outer.bottom - inner.top,
+        };
+      },
+      isEnabled: () => highlighterRef.current,
+      onPreview: (rects) => {
+        if (!rects) {
+          setPreview(null);
+          return;
+        }
+        const contents = renditionRef.current?.getContents?.()?.[0];
+        const frame = contents?.document?.defaultView?.frameElement;
+        const offset = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+        setPreview({
+          color: colorHex(settingsRef.current.defaultColor),
+          rects: rects.map((r) => ({
+            left: offset.left + r.left,
+            top: offset.top + r.top,
+            width: r.width,
+            height: r.height,
+          })),
+        });
+      },
+      onCommit: ({ range, text, trace }) => {
+        const contents = renditionRef.current?.getContents?.()?.[0];
+        try {
+          const cfiRange = contents?.cfiFromRange(range);
+          if (!cfiRange) {
+            closeTrace(trace, 'no-cfi', { anchored: false });
+            notify('That passage could not be anchored to the book.', 'error');
+            return;
+          }
+          closeTrace(trace, 'highlighted', { anchored: true });
+          saveHighlight({ cfiRange, text, color: settingsRef.current.defaultColor });
+        } catch (err) {
+          console.warn('Could not anchor that highlight', err);
+          closeTrace(trace, 'cfi-threw', { anchored: false, error: String(err?.message || err) });
+          notify('That passage could not be highlighted.', 'error');
+        }
+      },
+      // A press that never moved is still a mark to erase, a page to turn, or
+      // the chrome to show.
+      onTap: (x, y) => {
+        const mark = markAt(x, y);
+        if (mark) {
+          markClickRef.current = Date.now();
+          if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
+          else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+          return;
+        }
+        handleTap(x);
+      },
+      onMiss: (reason) =>
+        notify(
+          reason === 'no-text-found'
+            ? 'Could not read the text on this page to highlight it.'
+            : 'No text under that drag — try across a line.',
+          'error',
+          onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
+        ),
+      onTrace: (entry) => recordTrace({ ...entry, view: 'epub', flow: settingsRef.current.flow }),
+    });
+
+    dragDetachRef.current = detach;
+    return () => {
+      detach();
+      dragDetachRef.current = null;
+      setPreview(null);
+    };
+  }, [
+    highlighterOn,
+    status,
+    handleTap,
+    markAt,
+    closeTrace,
+    notify,
+    onShowDiagnostics,
+    saveHighlight,
+  ]);
 
   /* ------------------------------------------------------- book + rendition */
 
@@ -764,6 +822,95 @@ const EpubView = forwardRef(function EpubView(
     }
   }, [focusHighlightId, status, flashHighlight]);
 
+  /**
+   * Runs the whole highlight pipeline on the page in front of you, without
+   * anyone touching the screen.
+   *
+   * A recorded gesture tells you what happened when a finger arrived. This
+   * tells you what would happen if one did — which is the other half, and the
+   * half that matters when no gesture is being recorded at all. Every step is
+   * the same call the drag makes, in the same order, so a failure here is a
+   * failure there.
+   */
+  const selfTest = useCallback(() => {
+    const steps = [];
+    const add = (name, ok, detail = '') => steps.push({ name, ok, detail });
+
+    const rendition = renditionRef.current;
+    if (!rendition) {
+      add('book is rendered', false, 'no rendition yet');
+      return steps;
+    }
+    const contents = rendition.getContents?.() || [];
+    add('book is rendered', contents.length > 0, `${contents.length} section document(s)`);
+    const content = contents[0];
+    const doc = content?.document;
+    const frame = doc?.defaultView?.frameElement;
+    if (!doc || !frame) {
+      add('page reachable from the app', false, 'no iframe document');
+      return steps;
+    }
+    const rect = frame.getBoundingClientRect();
+    add('page reachable from the app', true, `frame ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+
+    add('catcher is up', !!catcherRef.current, highlighterOn ? '' : 'highlighter is off');
+    add('drag listener bound', !!dragDetachRef.current, highlighterOn ? '' : 'highlighter is off');
+    add('page has text', countTextNodes(doc) > 0, `${countTextNodes(doc)} text nodes`);
+
+    const container = frame.closest?.('.epub-container');
+    const outer = container?.getBoundingClientRect();
+    const box = outer && {
+      left: outer.left - rect.left,
+      top: outer.top - rect.top,
+      right: outer.right - rect.left,
+      bottom: outer.bottom - rect.top,
+    };
+    add('visible page located', !!box, box ? `${Math.round(box.right - box.left)}px wide` : '');
+
+    const tiers = {};
+    const index = indexForDrag(doc, box, tiers);
+    add('words measured on this page', index.length > 0, `${index.length} words · tiers ${JSON.stringify(tiers)}`);
+    if (!index.length) return steps;
+
+    // Two points on one line of real text, which is what a drag across a line
+    // would have produced.
+    const line = index.filter((word) => Math.abs(word.rect.top - index[0].rect.top) < 2);
+    const from = line[0] || index[0];
+    const to = line[line.length - 1] || index[Math.min(index.length - 1, 8)];
+    const at = (word, edge) => ({
+      x: edge === 'end' ? word.rect.right - 1 : word.rect.left + 1,
+      y: word.rect.top + word.rect.height / 2,
+    });
+    const a = at(from, 'start');
+    const b = at(to, 'end');
+
+    add('browser caret hit-test', !!caretFromApi(doc, a.x, a.y), 'optional — the word index is the fallback');
+
+    const anchor = caretRangeAt(doc, a.x, a.y, index, box);
+    add('start of drag resolved', !!anchor);
+    const focus = caretRangeAt(doc, b.x, b.y, index, box);
+    add('end of drag resolved', !!focus);
+    if (!anchor || !focus) return steps;
+
+    const spanned = rangeBetween(doc, anchor, focus);
+    add('range spans the two', !!spanned);
+    if (!spanned) return steps;
+
+    const snapped = snapToWords(spanned);
+    const text = snapped.toString().replace(/\s+/g, ' ').trim();
+    add('range covers text', !!text, text ? `“${text.slice(0, 48)}”` : 'empty');
+    add('range has shape on screen', rectsOf(snapped).length > 0, `${rectsOf(snapped).length} rect(s)`);
+    if (!text) return steps;
+
+    try {
+      const cfi = content.cfiFromRange(snapped);
+      add('anchored to the book', !!cfi, cfi || 'cfiFromRange returned nothing');
+    } catch (err) {
+      add('anchored to the book', false, String(err?.message || err));
+    }
+    return steps;
+  }, [highlighterOn]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -771,8 +918,9 @@ const EpubView = forwardRef(function EpubView(
       prev: () => turnPage('prev'),
       goTo: (target) => renditionRef.current?.display(target).catch(() => {}),
       goToHighlight: flashHighlight,
+      selfTest,
     }),
-    [flashHighlight, turnPage],
+    [flashHighlight, turnPage, selfTest],
   );
 
   /* ----------------------------------------------------------------- create */
@@ -802,6 +950,13 @@ const EpubView = forwardRef(function EpubView(
       style={{ padding: `2.5% ${settings.margin}%` }}
     >
       <div ref={hostRef} className="epub-host" />
+
+      {/*
+        Transparent, and above everything, only while the highlighter is on. It
+        exists to be the thing the finger lands on, in the top-level document,
+        because inside the iframe on iOS the touch was never heard.
+      */}
+      {highlighterOn && <div ref={catcherRef} className="epub-catcher" />}
 
       {preview && (
         <div className="drag-preview" aria-hidden="true">

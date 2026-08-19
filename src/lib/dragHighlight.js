@@ -26,7 +26,7 @@ const WORD = /[\p{L}\p{N}'’-]/u;
 const DRAG_SLOP = 6; // px of movement before a press becomes a drag
 
 /** The caret position under a point, across the two spellings of the API. */
-function caretFromApi(doc, x, y) {
+export function caretFromApi(doc, x, y) {
   try {
     if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y);
     if (doc.caretPositionFromPoint) {
@@ -121,7 +121,7 @@ function buildWordIndex(doc, box) {
  * so the fallback is worth the extra pass — a highlight anchored oddly beats a
  * gesture that does nothing.
  */
-function indexForDrag(doc, box, tiers = {}) {
+export function indexForDrag(doc, box, tiers = {}) {
   const viewport = fullViewport(doc);
   const page = box || viewport;
   if (page) {
@@ -145,7 +145,7 @@ function indexForDrag(doc, box, tiers = {}) {
 }
 
 /** How many text nodes the page has at all — zero means there was nothing to read. */
-function countTextNodes(doc) {
+export function countTextNodes(doc) {
   if (!doc.body) return 0;
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   let count = 0;
@@ -280,6 +280,7 @@ export function rectsOf(range) {
  */
 export function attachDragHighlighter({
   doc,
+  measureIn,
   isEnabled,
   containerFor,
   visibleBox,
@@ -298,6 +299,9 @@ export function attachDragHighlighter({
   let box = null;
   let handledAt = 0; // when the highlighter last finished a gesture
   let trace = null;
+  // Where the text being measured lives, which is not always where the finger
+  // was heard. See `measureIn`.
+  let page = { doc, offsetX: 0, offsetY: 0 };
 
   const reset = () => {
     anchor = null;
@@ -307,43 +311,53 @@ export function attachDragHighlighter({
     active = false;
     index = null;
     box = null;
+    page = { doc, offsetX: 0, offsetY: 0 };
   };
 
   const clearNativeSelection = () => {
-    try {
-      doc.getSelection?.()?.removeAllRanges();
-    } catch {
-      /* nothing selected */
+    for (const target of new Set([doc, page.doc])) {
+      try {
+        target.getSelection?.()?.removeAllRanges();
+      } catch {
+        /* nothing selected */
+      }
     }
   };
+
+  /** A client point from the listening document, in the measured one's frame. */
+  const local = (x, y) => ({ x: x - page.offsetX, y: y - page.offsetY });
 
   const begin = (x, y, target, pointer) => {
     if (!isEnabled()) return false;
     if (containerFor && !containerFor(target)) return false;
+    page = measureIn?.() || { doc, offsetX: 0, offsetY: 0 };
+    if (!page.doc) return false;
+    const start = local(x, y);
     // Measured once per drag; the page cannot move while we hold the gesture.
-    box = visibleBox?.() || fullViewport(doc);
+    box = visibleBox?.() || fullViewport(page.doc);
     const tiers = {};
-    index = indexForDrag(doc, box, tiers);
+    index = indexForDrag(page.doc, box, tiers);
     trace = {
       pointer,
       events: { start: 1, move: 0, end: 0, cancelable: null },
       index: tiers,
       doc: {
-        innerWidth: doc.defaultView?.innerWidth,
-        innerHeight: doc.defaultView?.innerHeight,
-        frameWidth: doc.defaultView?.frameElement?.getBoundingClientRect?.().width ?? 0,
-        frameHeight: doc.defaultView?.frameElement?.getBoundingClientRect?.().height ?? 0,
-        textNodes: countTextNodes(doc),
+        innerWidth: page.doc.defaultView?.innerWidth,
+        innerHeight: page.doc.defaultView?.innerHeight,
+        frameWidth: page.doc.defaultView?.frameElement?.getBoundingClientRect?.().width ?? 0,
+        frameHeight: page.doc.defaultView?.frameElement?.getBoundingClientRect?.().height ?? 0,
+        textNodes: countTextNodes(page.doc),
       },
       stage: {
         box: box
           ? `${Math.round(box.left)},${Math.round(box.top)} → ${Math.round(box.right)},${Math.round(box.bottom)}`
           : 'none',
+        heardIn: page.doc === doc ? 'same document' : 'overlay above the page',
       },
-      caretApi: !!(doc.caretRangeFromPoint || doc.caretPositionFromPoint),
-      caretApiHit: !!caretFromApi(doc, x, y),
+      caretApi: !!(page.doc.caretRangeFromPoint || page.doc.caretPositionFromPoint),
+      caretApiHit: !!caretFromApi(page.doc, start.x, start.y),
     };
-    anchor = caretRangeAt(doc, x, y, index, box);
+    anchor = caretRangeAt(page.doc, start.x, start.y, index, box);
     origin = { x, y };
     latest = null;
     dragging = false;
@@ -359,15 +373,18 @@ export function attachDragHighlighter({
     dragging = true;
     // The caret may not have resolved at touch-down — over a margin, say — so
     // keep trying until the finger reaches something addressable.
+    const here = local(x, y);
     if (!anchor) {
+      const from = local(origin.x, origin.y);
       anchor =
-        caretRangeAt(doc, origin.x, origin.y, index, box) || caretRangeAt(doc, x, y, index, box);
+        caretRangeAt(page.doc, from.x, from.y, index, box) ||
+        caretRangeAt(page.doc, here.x, here.y, index, box);
     }
     if (!anchor) return true;
 
-    const focus = caretRangeAt(doc, x, y, index, box);
+    const focus = caretRangeAt(page.doc, here.x, here.y, index, box);
     if (!focus) return true;
-    const range = rangeBetween(doc, anchor, focus);
+    const range = rangeBetween(page.doc, anchor, focus);
     if (!range) return true;
     latest = snapToWords(range);
     onPreview(rectsOf(latest));
@@ -384,14 +401,15 @@ export function attachDragHighlighter({
     let focus = null;
 
     if (wasDragging && anchor && Number.isFinite(x)) {
-      focus = caretRangeAt(doc, x, y, index, box);
-      const fresh = focus && rangeBetween(doc, anchor, focus);
+      const at = local(x, y);
+      focus = caretRangeAt(page.doc, at.x, at.y, index, box);
+      const fresh = focus && rangeBetween(page.doc, anchor, focus);
       if (fresh) range = snapToWords(fresh);
     }
 
     // Last resort: if our own reading of the page produced nothing but the
     // browser selected something anyway, take the browser's answer.
-    const native = range ? null : nativeSelectionRange(doc);
+    const native = range ? null : nativeSelectionRange(page.doc);
     if (native) range = snapToWords(native);
 
     // Why it failed, if it did — the difference between "we could not read the

@@ -1570,6 +1570,52 @@ button {
 
 /* --------------------------------------------------- highlighter diagnostics */
 
+.diag-subhead {
+  margin: 18px 0 0;
+  font-size: 14px;
+}
+
+.diag-steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.diag-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.diag-step-mark {
+  flex: none;
+  font-weight: 700;
+}
+
+.diag-step.is-ok .diag-step-mark {
+  color: #1d6b45;
+}
+
+.diag-step.is-bad {
+  font-weight: 600;
+}
+
+.diag-step.is-bad .diag-step-mark {
+  color: #8c2b2b;
+}
+
+.diag-step-detail {
+  display: block;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
 .diag-empty {
   margin: 14px 0;
   font-size: 13.5px;
@@ -2006,6 +2052,21 @@ button {
 .theme-black .drag-preview span {
   mix-blend-mode: screen;
   opacity: 0.45;
+}
+
+/*
+ * The sheet that hears a highlighter drag. It is deliberately in the top-level
+ * document rather than in the book's iframe: on iOS a touch inside epub.js's
+ * sandboxed frame never reached the listener there, while the identical code
+ * listening out here has always worked for PDFs on the same phone.
+ */
+.epub-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  touch-action: none;
+  cursor: crosshair;
+  background: transparent;
 }
 
 /* The stage keeps the gesture while highlighting instead of scrolling. */

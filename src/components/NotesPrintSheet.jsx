@@ -14,29 +14,82 @@ function where(highlight) {
  * Rendering it whenever notes are on screen means the browser's own Print
  * command produces the same document as the Export button.
  */
-export default function NotesPrintSheet({ groups, total }) {
+/** The Cornell sheet as a printed document: two columns and the summary bands. */
+function CornellPrint({ doc, exported }) {
+  return (
+    <article className="printsheet printsheet-cornell">
+      <header className="printsheet-head">
+        <h1>{doc.book.title}</h1>
+        <p>
+          {[doc.book.author, `${doc.total} highlight${doc.total === 1 ? '' : 's'}`, exported]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      </header>
+
+      {doc.sections.map((section) => (
+        <section key={section.key} className="printsheet-book">
+          {section.title && <h2>{section.title}</h2>}
+          {section.entries.map(({ highlight }) => (
+            <div
+              key={highlight.id}
+              className="printcornell"
+              style={{ '--note-color': colorHex(highlight.color) }}
+            >
+              <div className="printcornell-cue">
+                <p>{highlight.cue || ''}</p>
+                <span>{where(highlight)}</span>
+              </div>
+              <div className="printcornell-note">
+                <p className="printnote-text">{highlight.text}</p>
+                {highlight.note && <p className="printnote-note">{highlight.note}</p>}
+              </div>
+            </div>
+          ))}
+          {section.summary && (
+            <div className="printcornell-summary">
+              <h3>Summary{section.title ? ` — ${section.title}` : ''}</h3>
+              <p>{section.summary}</p>
+            </div>
+          )}
+        </section>
+      ))}
+
+      {doc.summary && (
+        <div className="printcornell-summary printcornell-summary-book">
+          <h3>Summary — {doc.book.title}</h3>
+          <p>{doc.summary}</p>
+        </div>
+      )}
+    </article>
+  );
+}
+
+export default function NotesPrintSheet({ groups, total, unit = 'book', cornell = null }) {
   const exported = new Date().toLocaleDateString(undefined, {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
   });
 
+  if (cornell) return createPortal(<CornellPrint doc={cornell} exported={exported} />, document.body);
+
   return createPortal(
     <article className="printsheet">
       <header className="printsheet-head">
         <h1>Highlights</h1>
         <p>
-          {total} highlight{total === 1 ? '' : 's'} across {groups.length} book
+          {total} highlight{total === 1 ? '' : 's'} across {groups.length} {unit}
           {groups.length === 1 ? '' : 's'} · {exported}
         </p>
       </header>
 
       {groups.map((group) => (
-        <section key={group.book.id} className="printsheet-book">
-          <h2>{group.book.title}</h2>
-          {group.book.author && <p className="printsheet-author">{group.book.author}</p>}
+        <section key={group.id} className="printsheet-book">
+          <h2>{group.title}</h2>
+          {group.subtitle && <p className="printsheet-author">{group.subtitle}</p>}
 
-          {group.highlights.map((highlight) => (
+          {group.entries.map(({ highlight, book }) => (
             <div
               key={highlight.id}
               className="printnote"
@@ -45,7 +98,15 @@ export default function NotesPrintSheet({ groups, total }) {
               <p className="printnote-text">{highlight.text}</p>
               {highlight.note && <p className="printnote-note">{highlight.note}</p>}
               <p className="printnote-meta">
-                {[colorLabel(highlight.color), where(highlight)].filter(Boolean).join(' · ')}
+                {[
+                  colorLabel(highlight.color),
+                  where(highlight),
+                  // Under a project heading the book is the missing half of the
+                  // citation; under a book heading it is already overhead.
+                  group.kind !== 'book' ? book?.title : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </p>
             </div>
           ))}

@@ -198,6 +198,25 @@ button {
   max-width: 55%;
 }
 
+.field-small {
+  padding: 5px 8px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  max-width: 100%;
+}
+
+/* Present to a screen reader, absent to everyone else. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -234,6 +253,19 @@ button {
 
 .btn-ghost {
   background: none;
+}
+
+/* Sits beside a primary action without competing with it. */
+.btn-quiet {
+  margin-right: auto;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.btn-quiet:hover {
+  color: var(--fg);
+  border-color: var(--line);
 }
 
 .btn-small {
@@ -522,7 +554,28 @@ button {
 }
 
 .notepad-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
   margin: 0 0 12px;
+}
+
+.notepad-summary p {
+  margin: 0;
+}
+
+.notepad-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Unfiled is a holding pen, not a project, and reads as one. */
+.note-group.is-unfiled .note-group-title strong {
+  color: var(--fg-muted);
+  font-style: italic;
 }
 
 .note-group {
@@ -668,6 +721,244 @@ button {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.note-project {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* ----------------------------------------------------------------- cornell */
+
+.view-switch .seg {
+  white-space: nowrap;
+}
+
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.cornell {
+  margin-top: 6px;
+  padding-bottom: 24px;
+}
+
+.cornell-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.cornell-head p {
+  margin: 4px 0 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.cornell-section {
+  margin-bottom: 28px;
+}
+
+.cornell-section-title {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  font-size: 15px;
+  border-bottom: 2px solid var(--line);
+}
+
+/*
+ * The two columns only exist when there is room for two columns. Below that the
+ * cue sits above its passage and reads as a label — the method survives the
+ * stacking, a 30/70 split of a phone screen would not.
+ */
+.cornell-legend {
+  display: none;
+}
+
+.cornell-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cornell-cue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cornell-cue-input,
+.cornell-note-input,
+.cornell-summary-input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: none;
+  overflow: hidden;
+}
+
+.cornell-cue-input {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.cornell-cue-input::placeholder,
+.cornell-note-input::placeholder,
+.cornell-summary-input::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+.cornell-where {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.cornell-quote {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 0 0 0 12px;
+  border: 0;
+  border-left: 3px solid var(--note-color, var(--accent));
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cornell-note-input {
+  font-size: 14px;
+  color: var(--fg-muted);
+}
+
+.cornell-summary {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.cornell-summary h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.cornell-summary-book {
+  margin-top: 24px;
+  border-width: 2px;
+  border-color: var(--accent);
+}
+
+@media (min-width: 620px) {
+  .cornell-legend {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 18px;
+    padding-bottom: 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .cornell-row {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 18px;
+  }
+
+  /* The rule down the page is what makes it read as a Cornell sheet. */
+  .cornell-cue {
+    border-right: 1px solid var(--line);
+    padding-right: 14px;
+  }
+}
+
+/* ---------------------------------------------------------------- projects */
+
+.project-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.project-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.project-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-confirm {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.danger-btn {
+  border-color: #8c2b2b;
+  color: #8c2b2b;
+}
+
+.name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.name-field .field {
+  flex: none;
 }
 
 .note-quote {
@@ -1406,6 +1697,28 @@ button {
   font-size: 13.5px;
   box-shadow: var(--shadow);
   animation: slide-up 0.18s ease;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* The stack itself is transparent to the finger; an undo button is not. */
+.toast-action {
+  pointer-events: auto;
+  margin-left: auto;
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-action:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .toast-success {
@@ -1414,6 +1727,123 @@ button {
 
 .toast-error {
   background: #8c2b2b;
+}
+
+/* --------------------------------------------------- highlighter diagnostics */
+
+.diag-subhead {
+  margin: 18px 0 0;
+  font-size: 14px;
+}
+
+.diag-steps {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.diag-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.diag-step-mark {
+  flex: none;
+  font-weight: 700;
+}
+
+.diag-step.is-ok .diag-step-mark {
+  color: #1d6b45;
+}
+
+.diag-step.is-bad {
+  font-weight: 600;
+}
+
+.diag-step.is-bad .diag-step-mark {
+  color: #8c2b2b;
+}
+
+.diag-step-detail {
+  display: block;
+  font-style: normal;
+  font-weight: 400;
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.diag-empty {
+  margin: 14px 0;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.diag-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.diag-entry {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diag-entry.is-highlighted {
+  border-left-color: #1d6b45;
+}
+
+.diag-entry.is-missed,
+.diag-entry.is-no-cfi,
+.diag-entry.is-cfi-threw,
+.diag-entry.is-no-rects {
+  border-left-color: #8c2b2b;
+}
+
+.diag-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.diag-head span {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.diag-line {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+}
+
+.diag-env {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
 }
 
 /* ------------------------------------------------------------ app updates */
@@ -1722,6 +2152,67 @@ button {
     font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
     letter-spacing: 0.02em;
   }
+
+  /*
+   * On paper the Cornell sheet keeps its columns — a printed page is wide
+   * enough for them, and the rule down the margin is the point of the format.
+   */
+  .printcornell {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 12pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    padding: 6pt 0;
+    border-bottom: 0.5pt solid #ddd;
+  }
+
+  .printcornell-cue {
+    border-right: 0.5pt solid #bbb;
+    padding-right: 10pt;
+  }
+
+  .printcornell-cue p {
+    margin: 0;
+    font-weight: 600;
+    font-size: 10.5pt;
+  }
+
+  .printcornell-cue span {
+    font-size: 8.5pt;
+    color: #666;
+  }
+
+  .printcornell-note {
+    padding-left: 8pt;
+    border-left: 3.5pt solid var(--note-color);
+  }
+
+  .printcornell-summary {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 10pt 0 18pt;
+    padding: 8pt 10pt;
+    border: 0.5pt solid #bbb;
+    background: #f6f6f4;
+  }
+
+  .printcornell-summary h3 {
+    margin: 0 0 4pt;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #555;
+  }
+
+  .printcornell-summary p {
+    margin: 0;
+  }
+
+  .printcornell-summary-book {
+    border-width: 1.5pt;
+    border-color: #333;
+  }
 }
 
 /* ------------------------------------------------------- highlighter mode */
@@ -1785,6 +2276,40 @@ button {
   opacity: 0.45;
 }
 
+/*
+ * The sheet that hears a highlighter drag. It is deliberately in the top-level
+ * document rather than in the book's iframe: on iOS a touch inside epub.js's
+ * sandboxed frame never reached the listener there, while the identical code
+ * listening out here has always worked for PDFs on the same phone.
+ */
+.epub-catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  touch-action: none;
+  cursor: crosshair;
+  background: transparent;
+}
+
+/*
+ * One of these sits over each highlight. epub.js detects taps on its own marks
+ * by listening inside the book's iframe, which is the one place a touch never
+ * arrives on iOS, so the tap has to be taken out here instead. They are only as
+ * big as the highlights themselves: everywhere else the page is left alone and
+ * text can still be selected.
+ */
+.epub-mark-hit {
+  position: fixed;
+  z-index: 35;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* The stage keeps the gesture while highlighting instead of scrolling. */
 .epub-host-wrap.is-highlighting,
 .pdf-scroll.is-highlighting {
@@ -1801,30 +2326,15 @@ button {
 /* --------------------------------------------------------- page turn --- */
 
 /*
- * epub.js swaps columns instantly. The host slides and fades across the turn,
- * and the swap is timed to land at the midpoint while the text is invisible, so
- * the eye reads it as one movement rather than a jump cut.
+ * The turn is driven from EpubView, which translates the rendered view inside
+ * epub.js's container. All the stylesheet owes it is a clip that holds, so the
+ * page arriving and the page leaving stay inside the stage rather than sliding
+ * out across the reader. Nothing is promoted to its own layer here: the view
+ * holds an iframe, and a layer kept around one permanently costs more on iOS
+ * than the turn is worth, so EpubView asks for it only while it slides.
  */
-.epub-host.is-turning-next {
-  animation: page-turn-next 260ms cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-.epub-host.is-turning-prev {
-  animation: page-turn-prev 260ms cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-@keyframes page-turn-next {
-  0% { transform: translateX(0); opacity: 1; }
-  44% { transform: translateX(-8%); opacity: 0; }
-  56% { transform: translateX(8%); opacity: 0; }
-  100% { transform: translateX(0); opacity: 1; }
-}
-
-@keyframes page-turn-prev {
-  0% { transform: translateX(0); opacity: 1; }
-  44% { transform: translateX(8%); opacity: 0; }
-  56% { transform: translateX(-8%); opacity: 0; }
-  100% { transform: translateX(0); opacity: 1; }
+.epub-host .epub-container {
+  overflow: hidden;
 }
 
 /* ------------------------------------------------------------------- sync */

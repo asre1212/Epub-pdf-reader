@@ -24,19 +24,52 @@ a file you already have is detected by content hash rather than duplicated.
 
 **Reading** — select any text and a colour picker appears right next to it; one tap
 saves the highlight. Tap an existing highlight to recolour it, attach a note, copy
-it, or remove it. The contents drawer lists both the table of contents and the
-highlights you have made in the book so far.
+it, or remove it — or turn on *Tap a highlight to erase it* in settings and a tap
+removes it there and then, with an undo on the message that follows. The contents
+drawer lists both the table of contents and the highlights you have made in the
+book so far.
 
 **Highlighter mode** — the pen button in the reader bar. Turn it on and drag a
 finger across text: the passage highlights as you go, snapped to whole words, in
 whichever colour the strip below the bar has selected. No long press, no
-selection handles. Taps still turn the page while it is on, and scrolling is
-suspended so a drag is never mistaken for a scroll — press *Done*, or Escape, to
-go back to normal. It works in both EPUBs and PDFs.
+selection handles. A drag belongs to the highlighter alone while it is on —
+nothing else reads it as a swipe or a scroll — and only the text on the page in
+front of you can be caught, never a column waiting off-screen. Taps still turn
+the page, and tapping a highlight still edits or erases it. Press *Done*, or
+Escape, to go back to normal. It works in both EPUBs and PDFs.
 
-Page turns slide and fade rather than cutting; *Animate page turns* in settings
-turns that off, and it is skipped anyway when the system asks for reduced
-motion.
+Page turns slide the page across rather than cutting to the next one. Inside a
+chapter that slide is a scroll, because a page turn already is one and the
+browser is therefore known to paint it; only crossing into a new chapter, where
+there is nothing behind the page to scroll away from, travels by transform.
+*Animate page turns* in settings turns it off, and it is skipped anyway when the
+system asks for reduced motion — which the settings sheet now says out loud
+rather than leaving the pages to jump with no explanation.
+
+In an EPUB the drag is heard by a transparent sheet over the book rather than
+inside epub.js's iframe, which is where it was heard until an iPhone reported
+dozens of failed highlights and not one recorded gesture. The text is still
+measured inside the frame; only the listening moved out.
+
+Tapping a highlight is answered by a small target of the app's own, laid over
+each mark in the top-level document. epub.js detects taps on its own marks by
+listening inside the book's iframe and matching coordinates, which is precisely
+the place a touch never arrives on iOS — the same fault as the highlighter, and
+it needed the same answer. The targets are only as big as the highlights, so
+text everywhere else can still be selected.
+
+If a drag ever fails to highlight, *Highlighter diagnostics* at the foot of the
+settings sheet has two halves. The self-test runs the whole highlight pipeline
+on the page behind it without anyone touching the screen, so it answers even
+when no gesture registers at all. Below it are the gestures that did arrive — whether the
+touches arrived, how much text could be measured on the page, whether a range
+was built and whether it could be anchored to the book. An empty gesture list
+after a drag is itself the finding: the touch is not reaching the highlighter.
+The self-test also turns a page and watches it, because "the animation is off"
+and "the animation ran and was not painted" look identical from the sofa. The
+failure message offers a *Why?* button that opens the same screen, and *Copy
+all* or *Save file* hands the lot over for a bug report. It exists because the highlighter runs inside
+an iframe on a phone, where none of that is visible from the outside.
 
 **Settings** — theme (light, sepia, dark, black), text size, line spacing,
 typeface, letter spacing, justification, page margin, and how pages scroll:
@@ -45,9 +78,32 @@ for PDFs. PDFs additionally get a zoom control and a fit-width/fit-page choice.
 Settings apply live and are remembered between sessions.
 
 **Notes tab** — every highlight from every book, grouped by book and sorted by
-title, compiled into a single notepad. Search the text and notes, filter by book
-or colour, show only annotated highlights, and edit notes in place. Tapping a
+reading order, searchable across text and notes. Filter by book, project or
+colour, show only annotated highlights, and edit notes in place. Tapping a
 highlight jumps to it in the book.
+
+**Cornell sheet** — the Notes tab has two views. The notepad is the list of
+everything; the Cornell sheet is one book laid out as a study document. It keeps
+the method's three parts: a narrow cue column for the keyword or question that
+recalls a passage, a wide notes column holding the passage and what you made of
+it, and a summary band closing each chapter and the book. The quotations are
+already there — the cues and the summaries are yours to write, and they save as
+you leave each field. On a phone the columns stack rather than shrinking, since
+a 30/70 split of a phone screen is two unreadable columns. Printing or copying
+while it is open gives you the sheet, columns and all, rather than the list.
+
+**Projects** — folders that cut across books, for when the useful grouping is
+the thing you are working on rather than the book it came from. A highlight sits
+in one project or in none; file it from the picker on any note, or narrow the
+list with the filters and file the whole of it in one move. *Group by project*
+turns the notepad inside out, with whatever is still unsorted collected under
+*Unfiled* at the bottom. Projects are managed from the **Projects** button:
+renaming is in place, and deleting one never deletes what it held — those
+highlights come loose and land back in *Unfiled*. Projects sync between devices
+and travel in backups, and restoring a backup will put a highlight back into its
+project if it is sitting unfiled, so losing a project by accident is
+recoverable. Exports follow whichever grouping is on screen, and under a project
+heading each quotation names the book it came from.
 
 **Export & backup** — the *Export* button covers whatever the current filters
 show, in the order shown:
@@ -154,14 +210,17 @@ if Playwright has not downloaded a browser of its own.
 | --- | --- |
 | `src/App.jsx` | Tab shell, import pipeline, and the single source of truth for books, highlights and settings |
 | `src/components/Library.jsx` | Book grid, search, sort, rename/delete |
-| `src/components/Notes.jsx` | The compiled notepad, filters and export |
+| `src/components/Notes.jsx` | The compiled notepad, grouping by book or project, filters and export |
+| `src/components/ProjectsSheet.jsx` | Making, renaming, reordering and deleting projects |
+| `src/components/CornellSheet.jsx` | One book as a Cornell study document: cue column, notes column, summary bands |
 | `src/components/Reader.jsx` | Reader chrome: title bar, progress, settings sheet, contents drawer |
 | `src/components/EpubView.jsx` | epub.js rendition, CFI-anchored highlights, typography and flow |
 | `src/components/PdfView.jsx` / `PdfPage.jsx` | pdf.js canvas + selectable text layer, lazy page rendering, rect-anchored highlights |
-| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `prefs` |
+| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `projects`, `summaries`, `prefs`, `tombstones` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
 | `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |
+| `src/lib/highlighterTrace.js` / `components/DiagnosticsSheet.jsx` | What each highlighter gesture did, for diagnosing a device you cannot reach |
 | `src/lib/backup.js` | Building, parsing and merging notes backups |
 | `src/lib/sync.js` / `syncCrypto.js` | Cross-device sync: key derivation, encryption, and the push/pull round |
 | `worker/` | The Cloudflare Worker and D1 schema behind sync |

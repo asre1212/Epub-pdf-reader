@@ -1,8 +1,19 @@
 import { APP_VERSION } from './appUpdates.js';
-import { listBooks, listHighlights, putBook, putHighlight, newId } from './db.js';
+import {
+  listBooks,
+  listHighlights,
+  listProjects,
+  listSummaries,
+  putSummary,
+  getSummary,
+  putBook,
+  putHighlight,
+  putProject,
+  newId,
+} from './db.js';
 
 export const BACKUP_FORMAT = 'marginalia-notes-backup';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 
 /**
  * A backup carries every highlight plus enough of each book's identity to put
@@ -32,17 +43,33 @@ function bookIdentity(book) {
 
 /** Builds the backup payload for the given highlights (all of them by default). */
 export async function buildBackup(highlights) {
-  const [allBooks, allHighlights] = await Promise.all([listBooks(), listHighlights()]);
+  const [allBooks, allHighlights, allProjects, allSummaries] = await Promise.all([
+    listBooks(),
+    listHighlights(),
+    listProjects(),
+    listSummaries(),
+  ]);
   const chosen = highlights || allHighlights;
   const usedBookIds = new Set(chosen.map((h) => h.bookId));
+  // Only the projects these highlights are actually filed under: a backup of
+  // one book's notes should not carry the reader's whole filing system.
+  const usedProjectIds = new Set(chosen.map((h) => h.projectId).filter(Boolean));
 
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     appVersion: APP_VERSION,
-    counts: { books: usedBookIds.size, highlights: chosen.length },
+    counts: {
+      books: usedBookIds.size,
+      highlights: chosen.length,
+      projects: usedProjectIds.size,
+    },
     books: allBooks.filter((book) => usedBookIds.has(book.id)).map(bookIdentity),
+    projects: allProjects.filter((project) => usedProjectIds.has(project.id)),
+    // The study sheets for the books being backed up: written work, not
+    // metadata, and the part a reader would most hate to lose.
+    summaries: allSummaries.filter((record) => usedBookIds.has(record.id)),
     highlights: chosen,
   };
 }
@@ -123,8 +150,6 @@ export async function restoreBackup(file) {
 
   const library = await listBooks();
   const existing = await listHighlights();
-  const existingIds = new Set(existing.map((h) => h.id));
-  const existingKeys = new Set(existing.map(highlightKey));
 
   // Backup book id -> the library book its highlights should attach to.
   const target = new Map();
@@ -155,8 +180,45 @@ export async function restoreBackup(file) {
     placeholders.push(placeholder);
   }
 
+  // Backup project id -> the project its highlights should be filed under. A
+  // project already here by id or by name is reused rather than duplicated:
+  // restoring the same notes on a device that already sorted them should not
+  // leave two folders called Thesis.
+  const projects = await listProjects();
+  const projectTarget = new Map();
+  for (const backupProject of data.projects || []) {
+    if (!backupProject?.id) continue;
+    const match =
+      projects.find((p) => p.id === backupProject.id) ||
+      projects.find((p) => normalise(p.name) === normalise(backupProject.name));
+    if (match) {
+      projectTarget.set(backupProject.id, match.id);
+      continue;
+    }
+    const created = await putProject({ ...backupProject, restoredFromBackup: true });
+    projects.push(created);
+    projectTarget.set(backupProject.id, created.id);
+  }
+
+  const existingById = new Map(existing.map((h) => [h.id, h]));
+  const existingByKey = new Map(existing.map((h) => [highlightKey(h), h]));
+
+  // Study sheets follow their book to whatever id it has here. An existing
+  // sheet is left alone: it is prose someone wrote, and a backup is not
+  // grounds to overwrite it.
+  let sheets = 0;
+  for (const record of data.summaries || []) {
+    const book = target.get(record.id);
+    if (!book) continue;
+    const local = await getSummary(book.id);
+    if (local?.summary || Object.keys(local?.chapters || {}).length) continue;
+    await putSummary({ ...record, id: book.id });
+    sheets += 1;
+  }
+
   let restored = 0;
   let skipped = 0;
+  let refiled = 0;
   let orphaned = 0;
 
   for (const highlight of data.highlights) {
@@ -166,22 +228,42 @@ export async function restoreBackup(file) {
       continue;
     }
     const candidate = { ...highlight, bookId: book.id };
+    if (candidate.projectId) {
+      // A highlight whose project did not come with the backup is restored
+      // unfiled rather than pointing at nothing.
+      candidate.projectId = projectTarget.get(candidate.projectId) ?? null;
+    }
     const key = highlightKey(candidate);
-    if (existingIds.has(candidate.id) || existingKeys.has(key)) {
-      skipped += 1;
+    const already = existingById.get(candidate.id) || existingByKey.get(key);
+    if (already) {
+      // Leaving a highlight alone is right for its text, its colour and its
+      // note, which the reader may have changed since. Its filing is different:
+      // if it is sitting unfiled and the backup knows where it belongs, putting
+      // it back fills a gap rather than overwriting a choice. That is the whole
+      // reason to restore a backup after losing a project.
+      if (candidate.projectId && !already.projectId) {
+        await putHighlight({ ...already, projectId: candidate.projectId, updatedAt: Date.now() });
+        already.projectId = candidate.projectId;
+        refiled += 1;
+      } else {
+        skipped += 1;
+      }
       continue;
     }
     if (!candidate.id) candidate.id = newId();
     await putHighlight(candidate);
-    existingIds.add(candidate.id);
-    existingKeys.add(key);
+    existingById.set(candidate.id, candidate);
+    existingByKey.set(key, candidate);
     restored += 1;
   }
 
   return {
     restored,
     skipped,
+    refiled,
     orphaned,
+    projects: projectTarget.size,
+    sheets,
     placeholders: placeholders.map((b) => b.title),
     exportedAt: data.exportedAt || null,
   };

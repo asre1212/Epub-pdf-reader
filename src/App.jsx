@@ -20,6 +20,15 @@ import {
   listBooks,
   listHighlights,
   putHighlight,
+  restoreHighlight as dbRestoreHighlight,
+  listProjects,
+  putProject,
+  updateProject as dbUpdateProject,
+  deleteProject as dbDeleteProject,
+  assignProject as dbAssignProject,
+  listSummaries,
+  saveSummary as dbSaveSummary,
+  newId,
   updateBook,
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
@@ -28,6 +37,7 @@ import { getSyncConfig, syncNow } from './lib/sync.js';
 import { importFiles } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
 import { drainSharedFiles } from './lib/shareInbox.js';
+import NameDialog from './components/NameDialog.jsx';
 
 export default function App() {
   const [tab, setTab] = useState('library');
@@ -38,6 +48,9 @@ export default function App() {
   const [reading, setReading] = useState(null); // { book, focusHighlightId }
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [summaries, setSummaries] = useState([]);
+  const [namingProject, setNamingProject] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [showAbout, setShowAbout] = useState(false);
   const [showSync, setShowSync] = useState(false);
@@ -48,11 +61,22 @@ export default function App() {
   const lastSyncAttempt = useRef(0);
   const update = useUpdateState();
 
-  const notify = useCallback((message, tone = 'info') => {
-    const id = ++toastId.current;
-    setToasts((list) => [...list, { id, message, tone }]);
-    setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 4200);
+  const dismissToast = useCallback((id) => {
+    setToasts((list) => list.filter((t) => t.id !== id));
   }, []);
+
+  /**
+   * `action` is an optional { label, onAct } shown as a button on the toast —
+   * how an undo is offered for something that happened without asking.
+   */
+  const notify = useCallback(
+    (message, tone = 'info', action = null) => {
+      const id = ++toastId.current;
+      setToasts((list) => [...list, { id, message, tone, action }]);
+      setTimeout(() => dismissToast(id), action ? 7000 : 4200);
+    },
+    [dismissToast],
+  );
 
   /* ------------------------------------------------------------- bootstrap */
 
@@ -64,9 +88,23 @@ export default function App() {
     setHighlights(await listHighlights());
   }, []);
 
+  const refreshProjects = useCallback(async () => {
+    setProjects(await listProjects());
+  }, []);
+
+  const refreshSummaries = useCallback(async () => {
+    setSummaries(await listSummaries());
+  }, []);
+
   useEffect(() => {
     (async () => {
-      const [stored] = await Promise.all([loadSettings(), refreshBooks(), refreshHighlights()]);
+      const [stored] = await Promise.all([
+        loadSettings(),
+        refreshBooks(),
+        refreshHighlights(),
+        refreshProjects(),
+        refreshSummaries(),
+      ]);
       setSettings(stored);
       setSettingsReady(true);
     })().catch((err) => {
@@ -74,7 +112,7 @@ export default function App() {
       notify('Could not open local storage. Private browsing may be blocking it.', 'error');
       setSettingsReady(true);
     });
-  }, [refreshBooks, refreshHighlights, notify]);
+  }, [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries, notify]);
 
   /* --------------------------------------------------------------- updates */
 
@@ -300,6 +338,16 @@ export default function App() {
     [scheduleSync],
   );
 
+  const undeleteHighlight = useCallback(
+    async (highlight) => {
+      const saved = await dbRestoreHighlight(highlight);
+      setHighlights((list) => [...list.filter((h) => h.id !== saved.id), saved]);
+      scheduleSync();
+      return saved;
+    },
+    [scheduleSync],
+  );
+
   const editHighlight = useCallback(
     async (id, patch) => {
       const next = await dbUpdateHighlight(id, patch);
@@ -319,13 +367,113 @@ export default function App() {
     [scheduleSync],
   );
 
+  /* -------------------------------------------------------------- projects */
+
+  /**
+   * Naming happens in a dialog rather than a prompt, and the promise is what the
+   * callers need: every place that offers "New project…" wants to file something
+   * into it the moment it exists.
+   */
+  const createProject = useCallback(
+    () =>
+      new Promise((resolve) => {
+        setNamingProject({
+          resolve: async (name) => {
+            if (!name) {
+              resolve(null);
+              return;
+            }
+            const made = await putProject({
+              id: newId(),
+              name,
+              order: Date.now(),
+              createdAt: Date.now(),
+            });
+            await refreshProjects();
+            scheduleSync();
+            notify(`Project “${made.name}” created`, 'success');
+            resolve(made);
+          },
+        });
+      }),
+    [notify, refreshProjects, scheduleSync],
+  );
+
+  const renameProject = useCallback(
+    async (id, name) => {
+      await dbUpdateProject(id, { name });
+      await refreshProjects();
+      scheduleSync();
+    },
+    [refreshProjects, scheduleSync],
+  );
+
+  const removeProject = useCallback(
+    async (id) => {
+      const project = projects.find((p) => p.id === id);
+      const freed = await dbDeleteProject(id);
+      await Promise.all([refreshProjects(), refreshHighlights()]);
+      scheduleSync();
+      notify(
+        freed.length
+          ? `“${project?.name || 'Project'}” deleted · ${freed.length} highlight${
+              freed.length === 1 ? '' : 's'
+            } unfiled`
+          : `“${project?.name || 'Project'}” deleted`,
+      );
+    },
+    [projects, notify, refreshProjects, refreshHighlights, scheduleSync],
+  );
+
+  /** Manual order, stored as a rank so two devices agree on the list. */
+  const reorderProjects = useCallback(
+    async (orderedIds) => {
+      await Promise.all(orderedIds.map((id, index) => dbUpdateProject(id, { order: index })));
+      await refreshProjects();
+      scheduleSync();
+    },
+    [refreshProjects, scheduleSync],
+  );
+
+  const assignProject = useCallback(
+    async (highlightIds, projectId) => {
+      const changed = await dbAssignProject(highlightIds, projectId);
+      if (changed.length) {
+        await refreshHighlights();
+        scheduleSync();
+      }
+      return changed.length;
+    },
+    [refreshHighlights, scheduleSync],
+  );
+
+  /**
+   * The Cornell summary bands. Saved on blur rather than on every keystroke:
+   * this is prose, and a write per character would be both wasteful and a poor
+   * unit for sync to resolve.
+   */
+  const saveSummary = useCallback(
+    async (bookId, patch) => {
+      const saved = await dbSaveSummary(bookId, patch);
+      setSummaries((list) => [...list.filter((r) => r.id !== saved.id), saved]);
+      scheduleSync();
+      return saved;
+    },
+    [scheduleSync],
+  );
+
   const handleRestoreBackup = useCallback(
     async (file) => {
       const report = await restoreBackup(file);
-      await Promise.all([refreshBooks(), refreshHighlights()]);
+      await Promise.all([
+        refreshBooks(),
+        refreshHighlights(),
+        refreshProjects(),
+        refreshSummaries(),
+      ]);
       return report;
     },
-    [refreshBooks, refreshHighlights],
+    [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries],
   );
 
   const highlightCounts = useMemo(() => {
@@ -372,9 +520,17 @@ export default function App() {
               <Notes
                 books={books || []}
                 highlights={highlights}
+                projects={projects}
+                summaries={summaries}
                 onOpenHighlight={(book, highlight) => openBook(book, highlight.id)}
                 onEditHighlight={editHighlight}
                 onDeleteHighlight={removeHighlight}
+                onAssignProject={assignProject}
+                onCreateProject={createProject}
+                onRenameProject={renameProject}
+                onDeleteProject={removeProject}
+                onReorderProjects={reorderProjects}
+                onSaveSummary={saveSummary}
                 onRestoreBackup={handleRestoreBackup}
                 notify={notify}
               />
@@ -425,6 +581,7 @@ export default function App() {
           onAddHighlight={addHighlight}
           onEditHighlight={editHighlight}
           onDeleteHighlight={removeHighlight}
+          onUndeleteHighlight={undeleteHighlight}
           onProgress={patchBook}
           notify={notify}
         />
@@ -455,7 +612,26 @@ export default function App() {
         </div>
       )}
 
-      <Toasts toasts={toasts} />
+      {namingProject && (
+        <NameDialog
+          title="New project"
+          label="What is this collection of notes for?"
+          placeholder="Thesis, book club, Chapter 3…"
+          confirmLabel="Create"
+          onSubmit={(name) => {
+            const { resolve } = namingProject;
+            setNamingProject(null);
+            resolve(name);
+          }}
+          onClose={() => {
+            const { resolve } = namingProject;
+            setNamingProject(null);
+            resolve(null);
+          }}
+        />
+      )}
+
+      <Toasts toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

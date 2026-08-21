@@ -31,9 +31,10 @@ function Segmented({ options, value, onChange, label }) {
   );
 }
 
-export default function SettingsSheet({ format, settings, onChange, onClose }) {
+export default function SettingsSheet({ format, settings, onChange, onDiagnostics, onClose }) {
   const isEpub = format === 'epub';
   const set = (patch) => onChange(patch);
+  const reducedMotion = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
   return (
     <div className="sheet-backdrop" onPointerDown={onClose}>
@@ -86,14 +87,27 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
         </Row>
 
         {isEpub && settings.flow === 'paginated' && (
-          <label className="toggle toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.pageAnimation !== false}
-              onChange={(e) => set({ pageAnimation: e.target.checked })}
-            />
-            <span>Animate page turns</span>
-          </label>
+          <>
+            <label className="toggle toggle-row">
+              <input
+                type="checkbox"
+                checked={settings.pageAnimation !== false}
+                onChange={(e) => set({ pageAnimation: e.target.checked })}
+              />
+              <span>Animate page turns</span>
+            </label>
+            {/*
+              Silently doing nothing is the worst of the options here: the
+              setting is on, the pages still jump, and there is no way to tell
+              that the device asked for that. Say so, and say where to change it.
+            */}
+            {settings.pageAnimation !== false && reducedMotion && (
+              <p className="set-hint">
+                Your device is asking for reduced motion, so page turns are not animated. Turn off
+                Reduce Motion in iOS Settings → Accessibility → Motion to see them.
+              </p>
+            )}
+          </>
         )}
 
         {isEpub ? (
@@ -212,6 +226,20 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
         <label className="toggle toggle-row">
           <input
             type="checkbox"
+            checked={!!settings.tapToErase}
+            onChange={(e) => set({ tapToErase: e.target.checked })}
+          />
+          <span>Tap a highlight to erase it</span>
+        </label>
+        <p className="set-hint">
+          {settings.tapToErase
+            ? 'Tapping a highlight removes it straight away, with an undo on the message that follows.'
+            : 'Tapping a highlight opens its colours, note and delete button.'}
+        </p>
+
+        <label className="toggle toggle-row">
+          <input
+            type="checkbox"
             checked={settings.keepAwake}
             onChange={(e) => set({ keepAwake: e.target.checked })}
           />
@@ -219,6 +247,11 @@ export default function SettingsSheet({ format, settings, onChange, onClose }) {
         </label>
 
         <div className="sheet-actions">
+          {onDiagnostics && (
+            <button type="button" className="btn btn-quiet" onClick={onDiagnostics}>
+              Highlighter diagnostics
+            </button>
+          )}
           <button type="button" className="btn btn-primary" onClick={onClose}>
             Done
           </button>

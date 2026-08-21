@@ -1,7 +1,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'marginalia';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 /**
  * Object stores:
@@ -11,6 +11,9 @@ const DB_VERSION = 3;
  *   highlights — every highlight, indexed by book
  *   projects   — reader-made folders that cut across books; a highlight names
  *                one through `projectId`, or none and it is unfiled
+ *   summaries  — the Cornell study sheet for a book: what the reader wrote in
+ *                the summary bands, keyed by book. Kept out of `books` because
+ *                it is authored work, not metadata, and syncs on its own terms
  *   prefs      — reader settings and other small key/value state
  *   tombstones — ids of deleted highlights and projects, so a deletion can be
  *                synced. Without them a delete on one device is undone by the
@@ -38,6 +41,9 @@ function getDB() {
         if (!db.objectStoreNames.contains('projects')) {
           const projects = db.createObjectStore('projects', { keyPath: 'id' });
           projects.createIndex('order', 'order');
+        }
+        if (!db.objectStoreNames.contains('summaries')) {
+          db.createObjectStore('summaries', { keyPath: 'id' });
         }
         if (!db.objectStoreNames.contains('prefs')) {
           db.createObjectStore('prefs');
@@ -109,9 +115,13 @@ export async function hasBookFile(id) {
 /** Removes a book together with its file and every highlight in it. */
 export async function deleteBook(id) {
   const db = await getDB();
-  const tx = db.transaction(['books', 'files', 'highlights', 'tombstones'], 'readwrite');
+  const tx = db.transaction(
+    ['books', 'files', 'highlights', 'summaries', 'tombstones'],
+    'readwrite',
+  );
   tx.objectStore('books').delete(id);
   tx.objectStore('files').delete(id);
+  tx.objectStore('summaries').delete(id);
   const index = tx.objectStore('highlights').index('bookId');
   const graves = tx.objectStore('tombstones');
   const now = Date.now();
@@ -193,6 +203,44 @@ export async function deleteHighlight(id, { remote = false } = {}) {
     });
   }
   await tx.done;
+}
+
+/* -------------------------------------------------------------- summaries */
+
+/**
+ * The written half of a Cornell sheet: one summary for the book and one for
+ * each of its sections. Stored per book and keyed by section title rather than
+ * by highlight, because a summary outlives any single highlight in it — delete
+ * the quotation and what you concluded from it should still be there.
+ */
+export async function listSummaries() {
+  return (await getDB()).getAll('summaries');
+}
+
+export async function getSummary(bookId) {
+  return (await getDB()).get('summaries', bookId);
+}
+
+export async function saveSummary(bookId, patch) {
+  const db = await getDB();
+  const tx = db.transaction('summaries', 'readwrite');
+  const existing = (await tx.store.get(bookId)) || { id: bookId, summary: '', chapters: {} };
+  const next = {
+    ...existing,
+    ...patch,
+    chapters: { ...existing.chapters, ...(patch.chapters || {}) },
+    id: bookId,
+    updatedAt: Date.now(),
+  };
+  await tx.store.put(next);
+  await tx.done;
+  return next;
+}
+
+export async function putSummary(summary) {
+  const record = { chapters: {}, summary: '', ...summary, updatedAt: summary.updatedAt ?? Date.now() };
+  await (await getDB()).put('summaries', record);
+  return record;
 }
 
 /* --------------------------------------------------------------- projects */

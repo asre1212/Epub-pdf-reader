@@ -11,6 +11,9 @@ import {
   listProjects,
   putProject,
   deleteProject,
+  listSummaries,
+  putSummary,
+  getSummary,
   setPref,
   updateBook,
 } from './db.js';
@@ -87,10 +90,11 @@ function bookByFingerprint(books) {
  * to be placed on a device that has not imported that book yet.
  */
 async function collectChanges(since) {
-  const [books, highlights, projects, tombstones] = await Promise.all([
+  const [books, highlights, projects, summaries, tombstones] = await Promise.all([
     listBooks(),
     listHighlights(),
     listProjects(),
+    listSummaries(),
     listTombstones(),
   ]);
   const booksById = new Map(books.map((b) => [b.id, b]));
@@ -138,6 +142,24 @@ async function collectChanges(since) {
       id: `pj:${project.id}`,
       clientAt: changedAt,
       value: { kind: 'project', project: { ...project, updatedAt: changedAt } },
+    });
+  }
+
+  // A study sheet travels by the book's fingerprint, like its reading position:
+  // the other device may hold that book under a different id.
+  for (const record of summaries) {
+    const changedAt = record.updatedAt || 0;
+    if (changedAt <= since) continue;
+    const book = booksById.get(record.id);
+    if (!book?.fingerprint) continue;
+    records.push({
+      id: `sm:${book.fingerprint}`,
+      clientAt: changedAt,
+      value: {
+        kind: 'summary',
+        fingerprint: book.fingerprint,
+        summary: { ...record, id: undefined, updatedAt: changedAt },
+      },
     });
   }
 
@@ -214,6 +236,20 @@ async function applyProject(value, projectsById) {
   return 1;
 }
 
+/**
+ * A Cornell sheet from another device. Written prose, so the newer version of
+ * the whole record wins rather than merging field by field — two devices
+ * editing the same summary band is a conflict no merge rule improves.
+ */
+async function applySummary(value, books) {
+  const book = bookByFingerprint(books).get(value.fingerprint);
+  if (!book) return 0; // the book is not here; nothing to attach it to
+  const local = await getSummary(book.id);
+  if ((local?.updatedAt || 0) >= (value.summary?.updatedAt || 0)) return 0;
+  await putSummary({ ...value.summary, id: book.id });
+  return 1;
+}
+
 async function applyIncoming(records, key) {
   const books = await listBooks();
   const existing = await listHighlights();
@@ -243,6 +279,7 @@ async function applyIncoming(records, key) {
       const value = await decryptRecord(key, record.payload);
       if (value.kind === 'position') applied += await applyPosition(value, books);
       else if (value.kind === 'project') applied += await applyProject(value, projectsById);
+      else if (value.kind === 'summary') applied += await applySummary(value, books);
       else if (value.kind === 'highlight') applied += await applyHighlight(value, books, existingById);
     } catch (err) {
       // One unreadable record must not stop the rest. The usual cause is a

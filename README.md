@@ -82,6 +82,16 @@ reading order, searchable across text and notes. Filter by book, project or
 colour, show only annotated highlights, and edit notes in place. Tapping a
 highlight jumps to it in the book.
 
+**Cornell sheet** — the Notes tab has two views. The notepad is the list of
+everything; the Cornell sheet is one book laid out as a study document. It keeps
+the method's three parts: a narrow cue column for the keyword or question that
+recalls a passage, a wide notes column holding the passage and what you made of
+it, and a summary band closing each chapter and the book. The quotations are
+already there — the cues and the summaries are yours to write, and they save as
+you leave each field. On a phone the columns stack rather than shrinking, since
+a 30/70 split of a phone screen is two unreadable columns. Printing or copying
+while it is open gives you the sheet, columns and all, rather than the list.
+
 **Projects** — folders that cut across books, for when the useful grouping is
 the thing you are working on rather than the book it came from. A highlight sits
 in one project or in none; file it from the picker on any note, or narrow the
@@ -202,10 +212,11 @@ if Playwright has not downloaded a browser of its own.
 | `src/components/Library.jsx` | Book grid, search, sort, rename/delete |
 | `src/components/Notes.jsx` | The compiled notepad, grouping by book or project, filters and export |
 | `src/components/ProjectsSheet.jsx` | Making, renaming, reordering and deleting projects |
+| `src/components/CornellSheet.jsx` | One book as a Cornell study document: cue column, notes column, summary bands |
 | `src/components/Reader.jsx` | Reader chrome: title bar, progress, settings sheet, contents drawer |
 | `src/components/EpubView.jsx` | epub.js rendition, CFI-anchored highlights, typography and flow |
 | `src/components/PdfView.jsx` / `PdfPage.jsx` | pdf.js canvas + selectable text layer, lazy page rendering, rect-anchored highlights |
-| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `projects`, `prefs`, `tombstones` |
+| `src/lib/db.js` | IndexedDB stores: `books`, `files`, `highlights`, `projects`, `summaries`, `prefs`, `tombstones` |
 | `src/lib/importBook.js` | Format detection, metadata and cover extraction, de-duplication, adopting restored books |
 | `src/lib/pdfRects.js` | Turns a DOM selection into page-relative highlight boxes |
 | `src/lib/dragHighlight.js` | Highlighter mode: caret hit-testing, word snapping and the drag gesture, shared by both views |

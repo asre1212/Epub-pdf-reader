@@ -3,8 +3,9 @@ import HighlightCard from './HighlightCard.jsx';
 import NotesExportSheet from './NotesExportSheet.jsx';
 import NotesPrintSheet from './NotesPrintSheet.jsx';
 import ProjectsSheet from './ProjectsSheet.jsx';
+import CornellSheet from './CornellSheet.jsx';
 import { HIGHLIGHT_COLORS } from '../lib/highlightColors.js';
-import { copyToClipboard, highlightsToMarkdown } from '../lib/exportNotes.js';
+import { copyToClipboard, cornellToMarkdown, highlightsToMarkdown } from '../lib/exportNotes.js';
 
 const BOOK_SORTS = [
   { id: 'title', label: 'Book title (A–Z)' },
@@ -26,6 +27,7 @@ export default function Notes({
   books,
   highlights,
   projects,
+  summaries,
   onOpenHighlight,
   onEditHighlight,
   onDeleteHighlight,
@@ -34,6 +36,7 @@ export default function Notes({
   onRenameProject,
   onDeleteProject,
   onReorderProjects,
+  onSaveSummary,
   onRestoreBackup,
   notify,
 }) {
@@ -47,9 +50,12 @@ export default function Notes({
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [showExport, setShowExport] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
+  // 'list' is the notepad; 'cornell' is one book laid out as a study sheet.
+  const [view, setView] = useState('list');
 
   const booksById = useMemo(() => new Map(books.map((b) => [b.id, b])), [books]);
   const projectsById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
+  const summariesById = useMemo(() => new Map(summaries.map((r) => [r.id, r])), [summaries]);
 
   /**
    * The filtered highlights, bucketed by whichever heading is in force.
@@ -196,10 +202,65 @@ export default function Notes({
   };
 
   const copyAll = async () => {
+    // Copy what is on screen: the study sheet copies as a study sheet.
+    if (view === 'cornell') {
+      if (!cornellDoc) return;
+      const ok = await copyToClipboard(cornellToMarkdown(cornellDoc));
+      notify(ok ? `Copied ${cornellDoc.book.title}` : 'Could not copy', ok ? 'success' : 'error');
+      return;
+    }
     if (!shown) return;
     const ok = await copyToClipboard(highlightsToMarkdown(groups));
     notify(ok ? `Copied ${shown} highlight${shown === 1 ? '' : 's'}` : 'Could not copy', ok ? 'success' : 'error');
   };
+
+  /**
+   * The book being studied, when the Cornell view is up.
+   *
+   * Cornell is a document about one book, so the view needs one chosen. Rather
+   * than a second picker beside the book filter, it reuses that filter and
+   * falls back to the book most recently read — the one you are most likely to
+   * be writing up.
+   */
+  const cornellBook = useMemo(() => {
+    if (view !== 'cornell') return null;
+    if (bookFilter !== 'all') return booksById.get(bookFilter) || null;
+    return (
+      [...booksWithHighlights].sort(
+        (a, b) => (b.lastOpenedAt || b.addedAt) - (a.lastOpenedAt || a.addedAt),
+      )[0] || null
+    );
+  }, [view, bookFilter, booksById, booksWithHighlights]);
+
+  /**
+   * That book's highlights as a Cornell document: sections in reading order,
+   * each with its own summary band, and one for the book at the end.
+   *
+   * Sections come from the chapter a highlight sits in. A PDF has no chapters,
+   * so it becomes a single flow rather than one section per page — a study
+   * sheet split two hundred ways is not a study sheet.
+   */
+  const cornellDoc = useMemo(() => {
+    if (!cornellBook) return null;
+    const record = summariesById.get(cornellBook.id);
+    const mine = highlights
+      .filter((h) => h.bookId === cornellBook.id)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt);
+
+    const sections = [];
+    const byKey = new Map();
+    for (const highlight of mine) {
+      const key = cornellBook.format === 'pdf' ? '' : highlight.chapter || '';
+      if (!byKey.has(key)) {
+        const section = { key, title: key, entries: [], summary: record?.chapters?.[key] || '' };
+        byKey.set(key, section);
+        sections.push(section);
+      }
+      byKey.get(key).entries.push({ highlight, book: cornellBook });
+    }
+
+    return { book: cornellBook, sections, total: mine.length, summary: record?.summary || '' };
+  }, [cornellBook, highlights, summariesById]);
 
   const isFiltered =
     !!query.trim() ||
@@ -232,6 +293,47 @@ export default function Notes({
 
         {highlights.length > 0 && (
           <>
+            <div className="view-switch" role="group" aria-label="How notes are shown">
+              <button
+                type="button"
+                className={view === 'list' ? 'seg is-on' : 'seg'}
+                onClick={() => setView('list')}
+                aria-pressed={view === 'list'}
+              >
+                Notepad
+              </button>
+              <button
+                type="button"
+                className={view === 'cornell' ? 'seg is-on' : 'seg'}
+                onClick={() => setView('cornell')}
+                aria-pressed={view === 'cornell'}
+              >
+                Cornell sheet
+              </button>
+            </div>
+
+            {view === 'cornell' ? (
+              <div className="filters">
+                <select
+                  className="field field-select"
+                  value={cornellBook?.id || ''}
+                  onChange={(e) => setBookFilter(e.target.value)}
+                  aria-label="Which book to study"
+                >
+                  {booksWithHighlights.map((book) => (
+                    <option key={book.id} value={book.id}>
+                      {book.title}
+                    </option>
+                  ))}
+                </select>
+                <p className="set-hint">
+                  Every highlight in this book, in reading order. Write a cue beside each passage
+                  and a summary under each section — those are yours; the quotations are already
+                  here.
+                </p>
+              </div>
+            ) : (
+              <>
             <div className="screen-head-row screen-head-tools">
               <input
                 type="search"
@@ -325,6 +427,8 @@ export default function Notes({
                 <span>With notes only</span>
               </label>
             </div>
+              </>
+            )}
           </>
         )}
       </header>
@@ -346,11 +450,28 @@ export default function Notes({
         </div>
       )}
 
-      {highlights.length > 0 && shown === 0 && (
+      {view === 'cornell' && cornellDoc && (
+        <CornellSheet
+          doc={cornellDoc}
+          onOpenHighlight={(highlight) => onOpenHighlight(cornellDoc.book, highlight)}
+          onChangeCue={(id, cue) => onEditHighlight(id, { cue })}
+          onChangeNote={(id, note) => onEditHighlight(id, { note })}
+          onChangeSectionSummary={(key, text) =>
+            onSaveSummary(cornellDoc.book.id, { chapters: { [key]: text } })
+          }
+          onChangeSummary={(text) => onSaveSummary(cornellDoc.book.id, { summary: text })}
+        />
+      )}
+
+      {view === 'cornell' && !cornellDoc && highlights.length > 0 && (
+        <p className="muted pad">Pick a book with highlights to study.</p>
+      )}
+
+      {view === 'list' && highlights.length > 0 && shown === 0 && (
         <p className="muted pad">Nothing matches those filters.</p>
       )}
 
-      {shown > 0 && (
+      {view === 'list' && shown > 0 && (
         <div className="notepad">
           <div className="notepad-summary">
             <p className="muted small">
@@ -452,7 +573,11 @@ export default function Notes({
         </div>
       )}
 
-      {shown > 0 && (
+      {/* The print rendition follows whatever is on screen, so the browser's own
+          Print command produces the document you were just looking at. */}
+      {view === 'cornell' && cornellDoc && <NotesPrintSheet cornell={cornellDoc} />}
+
+      {view === 'list' && shown > 0 && (
         <NotesPrintSheet
           groups={groups}
           total={shown}

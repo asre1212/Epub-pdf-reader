@@ -1,4 +1,5 @@
 import { colorLabel } from './highlightColors.js';
+import { sentenceCase } from './textCase.js';
 
 function locationLabel(highlight) {
   if (highlight.format === 'pdf') return `p. ${highlight.page}`;
@@ -128,10 +129,12 @@ export function outlineToMarkdown(doc) {
       const where = placeUnder(highlight, section.title);
       // A single bullet, however long the passage: a quotation broken across
       // list items stops being one bullet in every renderer downstream.
-      const text = highlight.text.replace(/\s*\n+\s*/g, ' ').trim();
+      const text = sentenceCase(highlight.text.replace(/\s*\n+\s*/g, ' ').trim());
       out.push(`- ${text}${where ? ` *(${where})*` : ''}`);
-      if (highlight.cue) out.push(`  - **${highlight.cue}**`);
-      if (highlight.note) out.push(`  - ${highlight.note.replace(/\s*\n+\s*/g, ' ').trim()}`);
+      if (highlight.cue) out.push(`  - **${sentenceCase(highlight.cue)}**`);
+      if (highlight.note) {
+        out.push(`  - ${sentenceCase(highlight.note.replace(/\s*\n+\s*/g, ' ').trim())}`);
+      }
     }
     out.push('');
     if (section.summary) {

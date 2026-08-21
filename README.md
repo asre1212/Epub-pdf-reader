@@ -94,11 +94,16 @@ while it is open gives you the sheet, columns and all, rather than the list.
 
 **Outline** — the same book as a plain outline. The headings are the chapters
 the passages were highlighted in, each passage is a bullet beneath its chapter,
-and a note nests under the passage it belongs to. Nothing is editable here: the
-notepad and the Cornell sheet are where notes are written, and this is where
-they are read back in order — or copied out, since Markdown is already an
-outline format and it pastes into a document as structure rather than as a wall
-of quotations.
+and a note nests under the passage it belongs to. A highlight starts wherever
+your finger did, which is often mid-sentence, so the first letter of each line
+is raised for display — the stored text is left as it was highlighted.
+
+Reading and editing are separate modes: the pen beside the book's title turns
+the lines into fields, and until then a tap on a passage opens it in the book
+rather than putting a caret in it. Editing a passage changes your copy of it,
+not the book. Copying or printing gives you the outline, since Markdown is
+already an outline format and it pastes into a document as structure rather
+than as a wall of quotations.
 
 **Projects** — folders that cut across books, for when the useful grouping is
 the thing you are working on rather than the book it came from. A highlight sits

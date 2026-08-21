@@ -563,7 +563,6 @@ export default function App() {
             >
               <NotesIcon />
               <span>Notes</span>
-              {highlights.length > 0 && <em className="tab-count">{highlights.length}</em>}
             </button>
           </nav>
         </>

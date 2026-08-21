@@ -1,4 +1,7 @@
+import { useState } from 'react';
 import { colorHex } from '../lib/highlightColors.js';
+import GrowingField from './GrowingField.jsx';
+import { sentenceCase } from '../lib/textCase.js';
 
 /**
  * A book's highlights as one continuous outline.
@@ -6,31 +9,60 @@ import { colorHex } from '../lib/highlightColors.js';
  * Where the Cornell sheet is a worksheet with room to write, this is the
  * finished shape: headings taken from the chapter each passage was highlighted
  * in, the passages beneath them as bullets, and a reader's note nested under
- * the passage it belongs to. Nothing is editable here on purpose — the notepad
- * and the Cornell sheet are where notes are written; this is where they are
- * read back in order.
+ * the passage it belongs to.
  *
- * The indentation carries the structure, so it holds at any width: a level is
- * one step in, not a column that has to be given up on a phone.
+ * Reading and editing are separate modes rather than one permissive screen. An
+ * outline is mostly read, and a page of textareas reads worse than a page of
+ * text — so the fields appear only when the pen is on, and until then a tap on
+ * a passage opens it in the book instead of putting a caret in it.
  */
+
+function PenIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0 0-3l-1-1a2.1 2.1 0 0 0-3 0L4 16z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path d="M13.5 6.5l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+    </svg>
+  );
+}
 
 function place(highlight) {
   if (highlight.format === 'pdf') return highlight.page ? `p. ${highlight.page}` : '';
   return '';
 }
 
-export default function OutlineSheet({ doc, onOpenHighlight }) {
+export default function OutlineSheet({ doc, onOpenHighlight, onChangeText, onChangeNote, onChangeCue }) {
+  const [editing, setEditing] = useState(false);
   const { book, sections, total } = doc;
   // A book whose highlights carry no chapter is one unbroken list; numbering a
   // single unnamed section would be a heading with nothing to distinguish.
   const numbered = sections.length > 1 || !!sections[0]?.title;
 
   return (
-    <article className="outline">
+    <article className={editing ? 'outline is-editing' : 'outline'}>
       <header className="outline-head">
-        <h2>{book.title}</h2>
+        <div className="outline-head-row">
+          <h2>{book.title}</h2>
+          <button
+            type="button"
+            className={editing ? 'icon-btn icon-btn-on' : 'icon-btn'}
+            onClick={() => setEditing((on) => !on)}
+            aria-pressed={editing}
+            aria-label={editing ? 'Finish editing the outline' : 'Edit the outline'}
+            title={editing ? 'Done editing' : 'Edit'}
+          >
+            <PenIcon />
+          </button>
+        </div>
         <p>
           {[book.author, `${total} highlight${total === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+          {editing && ' · editing'}
         </p>
       </header>
 
@@ -53,22 +85,56 @@ export default function OutlineSheet({ doc, onOpenHighlight }) {
                     className="outline-point"
                     style={{ '--note-color': colorHex(highlight.color) }}
                   >
-                    <button
-                      type="button"
-                      className="outline-text"
-                      onClick={() => onOpenHighlight(highlight)}
-                      title="Open in the book"
-                    >
-                      {highlight.text}
-                      {where && <span className="outline-where"> ({where})</span>}
-                    </button>
+                    {editing ? (
+                      <GrowingField
+                        className="outline-text-input"
+                        rows={1}
+                        value={highlight.text}
+                        ariaLabel="Passage"
+                        onCommit={(text) => text && onChangeText(highlight.id, text)}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="outline-text"
+                        onClick={() => onOpenHighlight(highlight)}
+                        title="Open in the book"
+                      >
+                        {sentenceCase(highlight.text)}
+                        {where && <span className="outline-where"> ({where})</span>}
+                      </button>
+                    )}
 
-                    {highlight.cue && <p className="outline-cue">{highlight.cue}</p>}
+                    {editing ? (
+                      <GrowingField
+                        className="outline-cue-input"
+                        rows={1}
+                        value={highlight.cue}
+                        placeholder="Keyword or question…"
+                        ariaLabel="Cue"
+                        onCommit={(cue) => onChangeCue(highlight.id, cue)}
+                      />
+                    ) : (
+                      highlight.cue && <p className="outline-cue">{sentenceCase(highlight.cue)}</p>
+                    )}
 
-                    {highlight.note && (
-                      <ul className="outline-subpoints">
-                        <li>{highlight.note}</li>
-                      </ul>
+                    {editing ? (
+                      <div className="outline-subpoints is-editing">
+                        <GrowingField
+                          className="outline-note-input"
+                          rows={1}
+                          value={highlight.note}
+                          placeholder="Your note…"
+                          ariaLabel="Note"
+                          onCommit={(note) => onChangeNote(highlight.id, note)}
+                        />
+                      </div>
+                    ) : (
+                      highlight.note && (
+                        <ul className="outline-subpoints">
+                          <li>{sentenceCase(highlight.note)}</li>
+                        </ul>
+                      )
                     )}
                   </li>
                 );
@@ -77,7 +143,7 @@ export default function OutlineSheet({ doc, onOpenHighlight }) {
 
             {section.summary && (
               <p className="outline-summary">
-                <strong>Summary.</strong> {section.summary}
+                <strong>Summary.</strong> {sentenceCase(section.summary)}
               </p>
             )}
           </li>
@@ -86,7 +152,7 @@ export default function OutlineSheet({ doc, onOpenHighlight }) {
 
       {doc.summary && (
         <p className="outline-summary outline-summary-book">
-          <strong>Summary — {book.title}.</strong> {doc.summary}
+          <strong>Summary — {book.title}.</strong> {sentenceCase(doc.summary)}
         </p>
       )}
     </article>

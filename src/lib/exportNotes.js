@@ -6,6 +6,17 @@ function locationLabel(highlight) {
 }
 
 /**
+ * Where a passage sits, when saying so adds anything.
+ *
+ * Under a heading that is already the chapter name, repeating it on every
+ * bullet is noise on every line of the document. A page number never is.
+ */
+function placeUnder(highlight, sectionTitle) {
+  const label = locationLabel(highlight);
+  return label && label !== sectionTitle ? label : '';
+}
+
+/**
  * The line under a highlight: its colour, where it sits, and — when the section
  * heading is not already the book — which book it came from. Grouped by
  * project, a section mixes books, and a quotation with no source is useless.
@@ -77,7 +88,7 @@ export function cornellToMarkdown(doc) {
       out.push(`### ${highlight.cue || '—'}`);
       out.push('');
       out.push(`> ${highlight.text.replace(/\n+/g, '\n> ')}`);
-      const place = locationLabel(highlight);
+      const place = placeUnder(highlight, section.title);
       if (place) out.push(`\n— ${place}`);
       if (highlight.note) out.push(`\n${highlight.note}`);
       out.push('');
@@ -90,6 +101,47 @@ export function cornellToMarkdown(doc) {
 
   if (doc.summary) {
     out.push('---', '', `**Summary — ${doc.book.title}**`, '', doc.summary, '');
+  }
+  return out.join('\n').trimEnd() + '\n';
+}
+
+/**
+ * A book's highlights as one outline.
+ *
+ * Markdown is already an outline format, so this is close to a direct
+ * translation: the chapter becomes the heading, each passage a bullet, and a
+ * note a nested bullet under the passage it belongs to. What comes out pastes
+ * into a document as structure rather than as a wall of quotations.
+ */
+export function outlineToMarkdown(doc) {
+  const out = [`# ${doc.book.title}`];
+  if (doc.book.author) out.push(`*${doc.book.author}*`);
+  out.push('');
+
+  const numbered = doc.sections.length > 1 || !!doc.sections[0]?.title;
+  doc.sections.forEach((section, index) => {
+    if (section.title) {
+      out.push(`## ${numbered ? `${index + 1}. ` : ''}${section.title}`);
+      out.push('');
+    }
+    for (const { highlight } of section.entries) {
+      const where = placeUnder(highlight, section.title);
+      // A single bullet, however long the passage: a quotation broken across
+      // list items stops being one bullet in every renderer downstream.
+      const text = highlight.text.replace(/\s*\n+\s*/g, ' ').trim();
+      out.push(`- ${text}${where ? ` *(${where})*` : ''}`);
+      if (highlight.cue) out.push(`  - **${highlight.cue}**`);
+      if (highlight.note) out.push(`  - ${highlight.note.replace(/\s*\n+\s*/g, ' ').trim()}`);
+    }
+    out.push('');
+    if (section.summary) {
+      out.push(`**Summary.** ${section.summary}`);
+      out.push('');
+    }
+  });
+
+  if (doc.summary) {
+    out.push('---', '', `**Summary — ${doc.book.title}.** ${doc.summary}`, '');
   }
   return out.join('\n').trimEnd() + '\n';
 }

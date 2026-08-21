@@ -729,6 +729,167 @@ button {
   min-width: 0;
 }
 
+/* ----------------------------------------------------------------- cornell */
+
+.view-switch .seg {
+  white-space: nowrap;
+}
+
+.view-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.cornell {
+  margin-top: 6px;
+  padding-bottom: 24px;
+}
+
+.cornell-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.cornell-head p {
+  margin: 4px 0 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.cornell-section {
+  margin-bottom: 28px;
+}
+
+.cornell-section-title {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  font-size: 15px;
+  border-bottom: 2px solid var(--line);
+}
+
+/*
+ * The two columns only exist when there is room for two columns. Below that the
+ * cue sits above its passage and reads as a label — the method survives the
+ * stacking, a 30/70 split of a phone screen would not.
+ */
+.cornell-legend {
+  display: none;
+}
+
+.cornell-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.cornell-cue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cornell-cue-input,
+.cornell-note-input,
+.cornell-summary-input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: none;
+  overflow: hidden;
+}
+
+.cornell-cue-input {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.cornell-cue-input::placeholder,
+.cornell-note-input::placeholder,
+.cornell-summary-input::placeholder {
+  color: var(--fg-muted);
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+.cornell-where {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.cornell-quote {
+  display: block;
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 0 0 0 12px;
+  border: 0;
+  border-left: 3px solid var(--note-color, var(--accent));
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cornell-note-input {
+  font-size: 14px;
+  color: var(--fg-muted);
+}
+
+.cornell-summary {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.cornell-summary h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+}
+
+.cornell-summary-book {
+  margin-top: 24px;
+  border-width: 2px;
+  border-color: var(--accent);
+}
+
+@media (min-width: 620px) {
+  .cornell-legend {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 18px;
+    padding-bottom: 6px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .cornell-row {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 18px;
+  }
+
+  /* The rule down the page is what makes it read as a Cornell sheet. */
+  .cornell-cue {
+    border-right: 1px solid var(--line);
+    padding-right: 14px;
+  }
+}
+
 /* ---------------------------------------------------------------- projects */
 
 .project-list {
@@ -1990,6 +2151,67 @@ button {
     color: #666;
     font-family: -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
     letter-spacing: 0.02em;
+  }
+
+  /*
+   * On paper the Cornell sheet keeps its columns — a printed page is wide
+   * enough for them, and the rule down the margin is the point of the format.
+   */
+  .printcornell {
+    display: grid;
+    grid-template-columns: 30% 1fr;
+    gap: 12pt;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    padding: 6pt 0;
+    border-bottom: 0.5pt solid #ddd;
+  }
+
+  .printcornell-cue {
+    border-right: 0.5pt solid #bbb;
+    padding-right: 10pt;
+  }
+
+  .printcornell-cue p {
+    margin: 0;
+    font-weight: 600;
+    font-size: 10.5pt;
+  }
+
+  .printcornell-cue span {
+    font-size: 8.5pt;
+    color: #666;
+  }
+
+  .printcornell-note {
+    padding-left: 8pt;
+    border-left: 3.5pt solid var(--note-color);
+  }
+
+  .printcornell-summary {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 10pt 0 18pt;
+    padding: 8pt 10pt;
+    border: 0.5pt solid #bbb;
+    background: #f6f6f4;
+  }
+
+  .printcornell-summary h3 {
+    margin: 0 0 4pt;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #555;
+  }
+
+  .printcornell-summary p {
+    margin: 0;
+  }
+
+  .printcornell-summary-book {
+    border-width: 1.5pt;
+    border-color: #333;
   }
 }
 

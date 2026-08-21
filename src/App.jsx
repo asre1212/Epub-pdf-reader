@@ -26,6 +26,8 @@ import {
   updateProject as dbUpdateProject,
   deleteProject as dbDeleteProject,
   assignProject as dbAssignProject,
+  listSummaries,
+  saveSummary as dbSaveSummary,
   newId,
   updateBook,
   updateHighlight as dbUpdateHighlight,
@@ -47,6 +49,7 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [projects, setProjects] = useState([]);
+  const [summaries, setSummaries] = useState([]);
   const [namingProject, setNamingProject] = useState(null);
   const [toasts, setToasts] = useState([]);
   const [showAbout, setShowAbout] = useState(false);
@@ -89,6 +92,10 @@ export default function App() {
     setProjects(await listProjects());
   }, []);
 
+  const refreshSummaries = useCallback(async () => {
+    setSummaries(await listSummaries());
+  }, []);
+
   useEffect(() => {
     (async () => {
       const [stored] = await Promise.all([
@@ -96,6 +103,7 @@ export default function App() {
         refreshBooks(),
         refreshHighlights(),
         refreshProjects(),
+        refreshSummaries(),
       ]);
       setSettings(stored);
       setSettingsReady(true);
@@ -104,7 +112,7 @@ export default function App() {
       notify('Could not open local storage. Private browsing may be blocking it.', 'error');
       setSettingsReady(true);
     });
-  }, [refreshBooks, refreshHighlights, refreshProjects, notify]);
+  }, [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries, notify]);
 
   /* --------------------------------------------------------------- updates */
 
@@ -439,13 +447,33 @@ export default function App() {
     [refreshHighlights, scheduleSync],
   );
 
+  /**
+   * The Cornell summary bands. Saved on blur rather than on every keystroke:
+   * this is prose, and a write per character would be both wasteful and a poor
+   * unit for sync to resolve.
+   */
+  const saveSummary = useCallback(
+    async (bookId, patch) => {
+      const saved = await dbSaveSummary(bookId, patch);
+      setSummaries((list) => [...list.filter((r) => r.id !== saved.id), saved]);
+      scheduleSync();
+      return saved;
+    },
+    [scheduleSync],
+  );
+
   const handleRestoreBackup = useCallback(
     async (file) => {
       const report = await restoreBackup(file);
-      await Promise.all([refreshBooks(), refreshHighlights(), refreshProjects()]);
+      await Promise.all([
+        refreshBooks(),
+        refreshHighlights(),
+        refreshProjects(),
+        refreshSummaries(),
+      ]);
       return report;
     },
-    [refreshBooks, refreshHighlights, refreshProjects],
+    [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries],
   );
 
   const highlightCounts = useMemo(() => {
@@ -493,6 +521,7 @@ export default function App() {
                 books={books || []}
                 highlights={highlights}
                 projects={projects}
+                summaries={summaries}
                 onOpenHighlight={(book, highlight) => openBook(book, highlight.id)}
                 onEditHighlight={editHighlight}
                 onDeleteHighlight={removeHighlight}
@@ -501,6 +530,7 @@ export default function App() {
                 onRenameProject={renameProject}
                 onDeleteProject={removeProject}
                 onReorderProjects={reorderProjects}
+                onSaveSummary={saveSummary}
                 onRestoreBackup={handleRestoreBackup}
                 notify={notify}
               />

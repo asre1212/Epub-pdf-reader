@@ -3,6 +3,9 @@ import {
   listBooks,
   listHighlights,
   listProjects,
+  listSummaries,
+  putSummary,
+  getSummary,
   putBook,
   putHighlight,
   putProject,
@@ -40,10 +43,11 @@ function bookIdentity(book) {
 
 /** Builds the backup payload for the given highlights (all of them by default). */
 export async function buildBackup(highlights) {
-  const [allBooks, allHighlights, allProjects] = await Promise.all([
+  const [allBooks, allHighlights, allProjects, allSummaries] = await Promise.all([
     listBooks(),
     listHighlights(),
     listProjects(),
+    listSummaries(),
   ]);
   const chosen = highlights || allHighlights;
   const usedBookIds = new Set(chosen.map((h) => h.bookId));
@@ -63,6 +67,9 @@ export async function buildBackup(highlights) {
     },
     books: allBooks.filter((book) => usedBookIds.has(book.id)).map(bookIdentity),
     projects: allProjects.filter((project) => usedProjectIds.has(project.id)),
+    // The study sheets for the books being backed up: written work, not
+    // metadata, and the part a reader would most hate to lose.
+    summaries: allSummaries.filter((record) => usedBookIds.has(record.id)),
     highlights: chosen,
   };
 }
@@ -196,6 +203,19 @@ export async function restoreBackup(file) {
   const existingById = new Map(existing.map((h) => [h.id, h]));
   const existingByKey = new Map(existing.map((h) => [highlightKey(h), h]));
 
+  // Study sheets follow their book to whatever id it has here. An existing
+  // sheet is left alone: it is prose someone wrote, and a backup is not
+  // grounds to overwrite it.
+  let sheets = 0;
+  for (const record of data.summaries || []) {
+    const book = target.get(record.id);
+    if (!book) continue;
+    const local = await getSummary(book.id);
+    if (local?.summary || Object.keys(local?.chapters || {}).length) continue;
+    await putSummary({ ...record, id: book.id });
+    sheets += 1;
+  }
+
   let restored = 0;
   let skipped = 0;
   let refiled = 0;
@@ -243,6 +263,7 @@ export async function restoreBackup(file) {
     refiled,
     orphaned,
     projects: projectTarget.size,
+    sheets,
     placeholders: placeholders.map((b) => b.title),
     exportedAt: data.exportedAt || null,
   };

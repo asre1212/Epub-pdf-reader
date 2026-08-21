@@ -55,6 +55,45 @@ export function highlightsToText(groups) {
   return out.join('\n').trimEnd() + '\n';
 }
 
+/**
+ * A Cornell sheet as one document.
+ *
+ * Markdown has no columns, so the cue becomes the heading of the passage it
+ * recalls — which is what a cue is for. Reading it back, the cues are the
+ * skimmable outline and the quotations hang beneath them, which is how the
+ * sheet is meant to be revised from.
+ */
+export function cornellToMarkdown(doc) {
+  const out = [`# ${doc.book.title}`];
+  if (doc.book.author) out.push(`*${doc.book.author}*`);
+  out.push('');
+
+  for (const section of doc.sections) {
+    if (section.title) {
+      out.push(`## ${section.title}`);
+      out.push('');
+    }
+    for (const { highlight } of section.entries) {
+      out.push(`### ${highlight.cue || '—'}`);
+      out.push('');
+      out.push(`> ${highlight.text.replace(/\n+/g, '\n> ')}`);
+      const place = locationLabel(highlight);
+      if (place) out.push(`\n— ${place}`);
+      if (highlight.note) out.push(`\n${highlight.note}`);
+      out.push('');
+    }
+    if (section.summary) {
+      out.push(`**Summary${section.title ? ` — ${section.title}` : ''}:** ${section.summary}`);
+      out.push('');
+    }
+  }
+
+  if (doc.summary) {
+    out.push('---', '', `**Summary — ${doc.book.title}**`, '', doc.summary, '');
+  }
+  return out.join('\n').trimEnd() + '\n';
+}
+
 export function downloadText(filename, text, mime = 'text/plain') {
   const blob = new Blob([text], { type: `${mime};charset=utf-8` });
   const url = URL.createObjectURL(blob);

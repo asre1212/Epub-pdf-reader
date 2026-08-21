@@ -82,7 +82,7 @@ reading order, searchable across text and notes. Filter by book, project or
 colour, show only annotated highlights, and edit notes in place. Tapping a
 highlight jumps to it in the book.
 
-**Cornell sheet** — the Notes tab has two views. The notepad is the list of
+**Cornell sheet** — the Notes tab has three views. The notepad is the list of
 everything; the Cornell sheet is one book laid out as a study document. It keeps
 the method's three parts: a narrow cue column for the keyword or question that
 recalls a passage, a wide notes column holding the passage and what you made of
@@ -91,6 +91,19 @@ already there — the cues and the summaries are yours to write, and they save a
 you leave each field. On a phone the columns stack rather than shrinking, since
 a 30/70 split of a phone screen is two unreadable columns. Printing or copying
 while it is open gives you the sheet, columns and all, rather than the list.
+
+**Outline** — the same book as a plain outline. The headings are the chapters
+the passages were highlighted in, each passage is a bullet beneath its chapter,
+and a note nests under the passage it belongs to. A highlight starts wherever
+your finger did, which is often mid-sentence, so the first letter of each line
+is raised for display — the stored text is left as it was highlighted.
+
+Reading and editing are separate modes: the pen beside the book's title turns
+the lines into fields, and until then a tap on a passage opens it in the book
+rather than putting a caret in it. Editing a passage changes your copy of it,
+not the book. Copying or printing gives you the outline, since Markdown is
+already an outline format and it pastes into a document as structure rather
+than as a wall of quotations.
 
 **Projects** — folders that cut across books, for when the useful grouping is
 the thing you are working on rather than the book it came from. A highlight sits
@@ -213,6 +226,7 @@ if Playwright has not downloaded a browser of its own.
 | `src/components/Notes.jsx` | The compiled notepad, grouping by book or project, filters and export |
 | `src/components/ProjectsSheet.jsx` | Making, renaming, reordering and deleting projects |
 | `src/components/CornellSheet.jsx` | One book as a Cornell study document: cue column, notes column, summary bands |
+| `src/components/OutlineSheet.jsx` | One book as a continuous outline: chapter headings, bulleted passages, nested notes |
 | `src/components/Reader.jsx` | Reader chrome: title bar, progress, settings sheet, contents drawer |
 | `src/components/EpubView.jsx` | epub.js rendition, CFI-anchored highlights, typography and flow |
 | `src/components/PdfView.jsx` / `PdfPage.jsx` | pdf.js canvas + selectable text layer, lazy page rendering, rect-anchored highlights |

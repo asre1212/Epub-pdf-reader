@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { colorHex, colorLabel } from '../lib/highlightColors.js';
+import { sentenceCase } from '../lib/textCase.js';
 
 function where(highlight) {
   if (highlight.format === 'pdf') return `Page ${highlight.page}`;
@@ -65,7 +66,72 @@ function CornellPrint({ doc, exported }) {
   );
 }
 
-export default function NotesPrintSheet({ groups, total, unit = 'book', cornell = null }) {
+/** The outline as a printed document: headings, bullets, nested notes. */
+function OutlinePrint({ doc, exported }) {
+  const numbered = doc.sections.length > 1 || !!doc.sections[0]?.title;
+  return (
+    <article className="printsheet printsheet-outline">
+      <header className="printsheet-head">
+        <h1>{doc.book.title}</h1>
+        <p>
+          {[doc.book.author, `${doc.total} highlight${doc.total === 1 ? '' : 's'}`, exported]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      </header>
+
+      {doc.sections.map((section, index) => (
+        <section key={section.key} className="printsheet-book">
+          {section.title && (
+            <h2>
+              {numbered ? `${index + 1}. ` : ''}
+              {section.title}
+            </h2>
+          )}
+          <ul className="printoutline">
+            {section.entries.map(({ highlight }) => (
+              <li key={highlight.id} style={{ '--note-color': colorHex(highlight.color) }}>
+                {sentenceCase(highlight.text)}
+                {highlight.format === 'pdf' && highlight.page && (
+                  <span className="printoutline-where"> (p. {highlight.page})</span>
+                )}
+                {(highlight.cue || highlight.note) && (
+                  <ul>
+                    {highlight.cue && (
+                      <li>
+                        <strong>{sentenceCase(highlight.cue)}</strong>
+                      </li>
+                    )}
+                    {highlight.note && <li>{sentenceCase(highlight.note)}</li>}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+          {section.summary && (
+            <p className="printoutline-summary">
+              <strong>Summary.</strong> {section.summary}
+            </p>
+          )}
+        </section>
+      ))}
+
+      {doc.summary && (
+        <p className="printoutline-summary">
+          <strong>Summary — {doc.book.title}.</strong> {doc.summary}
+        </p>
+      )}
+    </article>
+  );
+}
+
+export default function NotesPrintSheet({
+  groups,
+  total,
+  unit = 'book',
+  cornell = null,
+  outline = null,
+}) {
   const exported = new Date().toLocaleDateString(undefined, {
     day: 'numeric',
     month: 'long',
@@ -73,6 +139,7 @@ export default function NotesPrintSheet({ groups, total, unit = 'book', cornell 
   });
 
   if (cornell) return createPortal(<CornellPrint doc={cornell} exported={exported} />, document.body);
+  if (outline) return createPortal(<OutlinePrint doc={outline} exported={exported} />, document.body);
 
   return createPortal(
     <article className="printsheet">

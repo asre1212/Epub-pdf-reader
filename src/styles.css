@@ -130,20 +130,6 @@ button {
   color: var(--accent);
 }
 
-.tab-count {
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(10px);
-  font-style: normal;
-  font-size: 10px;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
 /* ------------------------------------------------------------------ screen */
 
 .screen {
@@ -166,11 +152,23 @@ button {
   letter-spacing: -0.02em;
 }
 
+/*
+ * The title and its actions share a row until they cannot. On a narrow screen
+ * three buttons and a heading do not fit on one line, and without somewhere to
+ * go they ride over each other — so the row wraps and the actions take the next
+ * line whole.
+ */
 .screen-head-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 10px 12px;
+  flex-wrap: wrap;
   justify-content: space-between;
+}
+
+.screen-head-row h1 {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .screen-head-tools {
@@ -179,6 +177,9 @@ button {
 
 .head-actions {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -888,6 +889,176 @@ button {
     border-right: 1px solid var(--line);
     padding-right: 14px;
   }
+}
+
+/* ----------------------------------------------------------------- outline */
+
+.outline {
+  margin-top: 6px;
+  padding-bottom: 24px;
+}
+
+.outline-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.outline-head h2 {
+  margin: 0;
+  font-size: 22px;
+  min-width: 0;
+}
+
+/* Editing is a mode, so it is visible as one rather than only in the pen. */
+.outline.is-editing .outline-points {
+  border-left-color: var(--accent);
+}
+
+.outline-text-input,
+.outline-cue-input,
+.outline-note-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  resize: none;
+  overflow: hidden;
+}
+
+.outline-cue-input {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.outline-note-input {
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.outline-subpoints.is-editing {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+}
+
+.outline-head p {
+  margin: 4px 0 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.outline-sections,
+.outline-points,
+.outline-subpoints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.outline-section {
+  margin-bottom: 22px;
+}
+
+.outline-section-title {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding-bottom: 5px;
+  font-size: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.outline-marker {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The indentation is the structure, so it is drawn rather than assumed: a rule
+ * down the left of each level keeps the outline legible when a passage runs to
+ * several lines, which quotations reliably do.
+ */
+.outline-points {
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+
+.outline-point {
+  position: relative;
+  padding: 5px 0 5px 18px;
+}
+
+.outline-point::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 13px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--note-color, var(--accent));
+}
+
+.outline-text {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.outline-where {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+.outline-cue {
+  margin: 3px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.outline-subpoints {
+  margin: 3px 0 0;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+}
+
+.outline-subpoints li {
+  position: relative;
+  padding-left: 12px;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.outline-subpoints li::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+}
+
+.outline-summary {
+  margin: 10px 0 0 4px;
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.outline-summary-book {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  color: var(--fg);
 }
 
 /* ---------------------------------------------------------------- projects */
@@ -2212,6 +2383,39 @@ button {
   .printcornell-summary-book {
     border-width: 1.5pt;
     border-color: #333;
+  }
+
+  /* The outline prints as an outline: real list markers, real indentation. */
+  .printoutline {
+    margin: 0 0 8pt;
+    padding-left: 16pt;
+  }
+
+  .printoutline > li {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 6pt;
+  }
+
+  .printoutline ul {
+    margin: 3pt 0 0;
+    padding-left: 14pt;
+    list-style-type: '– ';
+    font-size: 10pt;
+    color: #333;
+  }
+
+  .printoutline-where {
+    font-size: 8.5pt;
+    color: #666;
+  }
+
+  .printoutline-summary {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin: 4pt 0 14pt;
+    font-size: 10pt;
+    color: #333;
   }
 }
 

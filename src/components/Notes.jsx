@@ -4,8 +4,14 @@ import NotesExportSheet from './NotesExportSheet.jsx';
 import NotesPrintSheet from './NotesPrintSheet.jsx';
 import ProjectsSheet from './ProjectsSheet.jsx';
 import CornellSheet from './CornellSheet.jsx';
+import OutlineSheet from './OutlineSheet.jsx';
 import { HIGHLIGHT_COLORS } from '../lib/highlightColors.js';
-import { copyToClipboard, cornellToMarkdown, highlightsToMarkdown } from '../lib/exportNotes.js';
+import {
+  copyToClipboard,
+  cornellToMarkdown,
+  highlightsToMarkdown,
+  outlineToMarkdown,
+} from '../lib/exportNotes.js';
 
 const BOOK_SORTS = [
   { id: 'title', label: 'Book title (A–Z)' },
@@ -203,10 +209,11 @@ export default function Notes({
 
   const copyAll = async () => {
     // Copy what is on screen: the study sheet copies as a study sheet.
-    if (view === 'cornell') {
-      if (!cornellDoc) return;
-      const ok = await copyToClipboard(cornellToMarkdown(cornellDoc));
-      notify(ok ? `Copied ${cornellDoc.book.title}` : 'Could not copy', ok ? 'success' : 'error');
+    if (view !== 'list') {
+      if (!studyDoc) return;
+      const shape = view === 'outline' ? outlineToMarkdown : cornellToMarkdown;
+      const ok = await copyToClipboard(shape(studyDoc));
+      notify(ok ? `Copied ${studyDoc.book.title}` : 'Could not copy', ok ? 'success' : 'error');
       return;
     }
     if (!shown) return;
@@ -215,15 +222,15 @@ export default function Notes({
   };
 
   /**
-   * The book being studied, when the Cornell view is up.
+   * The book being studied, when either study view is up.
    *
-   * Cornell is a document about one book, so the view needs one chosen. Rather
+   * Both are documents about one book, so the view needs one chosen. Rather
    * than a second picker beside the book filter, it reuses that filter and
    * falls back to the book most recently read — the one you are most likely to
    * be writing up.
    */
-  const cornellBook = useMemo(() => {
-    if (view !== 'cornell') return null;
+  const studyBook = useMemo(() => {
+    if (view === 'list') return null;
     if (bookFilter !== 'all') return booksById.get(bookFilter) || null;
     return (
       [...booksWithHighlights].sort(
@@ -233,34 +240,38 @@ export default function Notes({
   }, [view, bookFilter, booksById, booksWithHighlights]);
 
   /**
-   * That book's highlights as a Cornell document: sections in reading order,
-   * each with its own summary band, and one for the book at the end.
+   * That book's highlights as one document: sections in reading order, each
+   * carrying its entries and whatever summary has been written for it.
+   *
+   * The Cornell sheet and the outline are two renderings of this same shape —
+   * a section list with a title and its passages — so the chapter headings and
+   * the reading order are decided once, here, rather than twice.
    *
    * Sections come from the chapter a highlight sits in. A PDF has no chapters,
    * so it becomes a single flow rather than one section per page — a study
    * sheet split two hundred ways is not a study sheet.
    */
-  const cornellDoc = useMemo(() => {
-    if (!cornellBook) return null;
-    const record = summariesById.get(cornellBook.id);
+  const studyDoc = useMemo(() => {
+    if (!studyBook) return null;
+    const record = summariesById.get(studyBook.id);
     const mine = highlights
-      .filter((h) => h.bookId === cornellBook.id)
+      .filter((h) => h.bookId === studyBook.id)
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.createdAt - b.createdAt);
 
     const sections = [];
     const byKey = new Map();
     for (const highlight of mine) {
-      const key = cornellBook.format === 'pdf' ? '' : highlight.chapter || '';
+      const key = studyBook.format === 'pdf' ? '' : highlight.chapter || '';
       if (!byKey.has(key)) {
         const section = { key, title: key, entries: [], summary: record?.chapters?.[key] || '' };
         byKey.set(key, section);
         sections.push(section);
       }
-      byKey.get(key).entries.push({ highlight, book: cornellBook });
+      byKey.get(key).entries.push({ highlight, book: studyBook });
     }
 
-    return { book: cornellBook, sections, total: mine.length, summary: record?.summary || '' };
-  }, [cornellBook, highlights, summariesById]);
+    return { book: studyBook, sections, total: mine.length, summary: record?.summary || '' };
+  }, [studyBook, highlights, summariesById]);
 
   const isFiltered =
     !!query.trim() ||
@@ -310,13 +321,21 @@ export default function Notes({
               >
                 Cornell sheet
               </button>
+              <button
+                type="button"
+                className={view === 'outline' ? 'seg is-on' : 'seg'}
+                onClick={() => setView('outline')}
+                aria-pressed={view === 'outline'}
+              >
+                Outline
+              </button>
             </div>
 
-            {view === 'cornell' ? (
+            {view !== 'list' ? (
               <div className="filters">
                 <select
                   className="field field-select"
-                  value={cornellBook?.id || ''}
+                  value={studyBook?.id || ''}
                   onChange={(e) => setBookFilter(e.target.value)}
                   aria-label="Which book to study"
                 >
@@ -327,9 +346,9 @@ export default function Notes({
                   ))}
                 </select>
                 <p className="set-hint">
-                  Every highlight in this book, in reading order. Write a cue beside each passage
-                  and a summary under each section — those are yours; the quotations are already
-                  here.
+                  {view === 'outline'
+                    ? 'Every highlight in this book as one outline, in reading order, under the chapter it came from.'
+                    : 'Every highlight in this book, in reading order. Write a cue beside each passage and a summary under each section — those are yours; the quotations are already here.'}
                 </p>
               </div>
             ) : (
@@ -450,20 +469,30 @@ export default function Notes({
         </div>
       )}
 
-      {view === 'cornell' && cornellDoc && (
+      {view === 'cornell' && studyDoc && (
         <CornellSheet
-          doc={cornellDoc}
-          onOpenHighlight={(highlight) => onOpenHighlight(cornellDoc.book, highlight)}
+          doc={studyDoc}
+          onOpenHighlight={(highlight) => onOpenHighlight(studyDoc.book, highlight)}
           onChangeCue={(id, cue) => onEditHighlight(id, { cue })}
           onChangeNote={(id, note) => onEditHighlight(id, { note })}
           onChangeSectionSummary={(key, text) =>
-            onSaveSummary(cornellDoc.book.id, { chapters: { [key]: text } })
+            onSaveSummary(studyDoc.book.id, { chapters: { [key]: text } })
           }
-          onChangeSummary={(text) => onSaveSummary(cornellDoc.book.id, { summary: text })}
+          onChangeSummary={(text) => onSaveSummary(studyDoc.book.id, { summary: text })}
         />
       )}
 
-      {view === 'cornell' && !cornellDoc && highlights.length > 0 && (
+      {view === 'outline' && studyDoc && (
+        <OutlineSheet
+          doc={studyDoc}
+          onOpenHighlight={(highlight) => onOpenHighlight(studyDoc.book, highlight)}
+          onChangeText={(id, text) => onEditHighlight(id, { text })}
+          onChangeNote={(id, note) => onEditHighlight(id, { note })}
+          onChangeCue={(id, cue) => onEditHighlight(id, { cue })}
+        />
+      )}
+
+      {view !== 'list' && !studyDoc && highlights.length > 0 && (
         <p className="muted pad">Pick a book with highlights to study.</p>
       )}
 
@@ -575,7 +604,8 @@ export default function Notes({
 
       {/* The print rendition follows whatever is on screen, so the browser's own
           Print command produces the document you were just looking at. */}
-      {view === 'cornell' && cornellDoc && <NotesPrintSheet cornell={cornellDoc} />}
+      {view === 'cornell' && studyDoc && <NotesPrintSheet cornell={studyDoc} />}
+      {view === 'outline' && studyDoc && <NotesPrintSheet outline={studyDoc} />}
 
       {view === 'list' && shown > 0 && (
         <NotesPrintSheet

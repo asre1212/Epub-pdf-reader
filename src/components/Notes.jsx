@@ -486,6 +486,9 @@ export default function Notes({
         <OutlineSheet
           doc={studyDoc}
           onOpenHighlight={(highlight) => onOpenHighlight(studyDoc.book, highlight)}
+          onChangeText={(id, text) => onEditHighlight(id, { text })}
+          onChangeNote={(id, note) => onEditHighlight(id, { note })}
+          onChangeCue={(id, cue) => onEditHighlight(id, { cue })}
         />
       )}
 

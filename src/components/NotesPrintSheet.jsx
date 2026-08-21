@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { colorHex, colorLabel } from '../lib/highlightColors.js';
+import { sentenceCase } from '../lib/textCase.js';
 
 function where(highlight) {
   if (highlight.format === 'pdf') return `Page ${highlight.page}`;
@@ -90,7 +91,7 @@ function OutlinePrint({ doc, exported }) {
           <ul className="printoutline">
             {section.entries.map(({ highlight }) => (
               <li key={highlight.id} style={{ '--note-color': colorHex(highlight.color) }}>
-                {highlight.text}
+                {sentenceCase(highlight.text)}
                 {highlight.format === 'pdf' && highlight.page && (
                   <span className="printoutline-where"> (p. {highlight.page})</span>
                 )}
@@ -98,10 +99,10 @@ function OutlinePrint({ doc, exported }) {
                   <ul>
                     {highlight.cue && (
                       <li>
-                        <strong>{highlight.cue}</strong>
+                        <strong>{sentenceCase(highlight.cue)}</strong>
                       </li>
                     )}
-                    {highlight.note && <li>{highlight.note}</li>}
+                    {highlight.note && <li>{sentenceCase(highlight.note)}</li>}
                   </ul>
                 )}
               </li>

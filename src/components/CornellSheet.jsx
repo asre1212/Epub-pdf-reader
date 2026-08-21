@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
 import { colorHex } from '../lib/highlightColors.js';
+import GrowingField from './GrowingField.jsx';
 
 /**
  * A book's highlights as one Cornell document.
@@ -14,42 +14,6 @@ import { colorHex } from '../lib/highlightColors.js';
  * two unreadable columns rather than a study sheet. The cue keeps its place by
  * sitting above its passage and reading as a label.
  */
-
-/** A textarea that grows to its content, so the document has no inner scrollbars. */
-function Growing({ value, onCommit, placeholder, className, rows = 2, ariaLabel }) {
-  const [draft, setDraft] = useState(value || '');
-  const ref = useRef(null);
-
-  useEffect(() => setDraft(value || ''), [value]);
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    node.style.height = 'auto';
-    node.style.height = `${node.scrollHeight}px`;
-  }, [draft]);
-
-  return (
-    <textarea
-      ref={ref}
-      className={className}
-      rows={rows}
-      value={draft}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        if ((draft || '') !== (value || '')) onCommit(draft.trim());
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          setDraft(value || '');
-          e.currentTarget.blur();
-        }
-      }}
-    />
-  );
-}
 
 function where(highlight) {
   if (highlight.format === 'pdf') return highlight.page ? `p. ${highlight.page}` : '';
@@ -96,7 +60,7 @@ export default function CornellSheet({
                 style={{ '--note-color': colorHex(highlight.color) }}
               >
                 <div className="cornell-cue">
-                  <Growing
+                  <GrowingField
                     className="cornell-cue-input"
                     value={highlight.cue}
                     placeholder="Keyword or question…"
@@ -117,7 +81,7 @@ export default function CornellSheet({
                   >
                     {highlight.text}
                   </button>
-                  <Growing
+                  <GrowingField
                     className="cornell-note-input"
                     value={highlight.note}
                     placeholder="What you made of it…"
@@ -132,7 +96,7 @@ export default function CornellSheet({
 
           <div className="cornell-summary cornell-summary-section">
             <h4>{section.title ? `Summary — ${section.title}` : 'Section summary'}</h4>
-            <Growing
+            <GrowingField
               className="cornell-summary-input"
               rows={2}
               value={section.summary}
@@ -146,7 +110,7 @@ export default function CornellSheet({
 
       <div className="cornell-summary cornell-summary-book">
         <h4>Summary — {book.title}</h4>
-        <Growing
+        <GrowingField
           className="cornell-summary-input"
           rows={4}
           value={summary}

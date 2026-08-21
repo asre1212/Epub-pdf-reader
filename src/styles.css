@@ -130,20 +130,6 @@ button {
   color: var(--accent);
 }
 
-.tab-count {
-  position: absolute;
-  top: 4px;
-  left: 50%;
-  transform: translateX(10px);
-  font-style: normal;
-  font-size: 10px;
-  line-height: 1;
-  padding: 3px 5px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
 /* ------------------------------------------------------------------ screen */
 
 .screen {
@@ -166,11 +152,23 @@ button {
   letter-spacing: -0.02em;
 }
 
+/*
+ * The title and its actions share a row until they cannot. On a narrow screen
+ * three buttons and a heading do not fit on one line, and without somewhere to
+ * go they ride over each other — so the row wraps and the actions take the next
+ * line whole.
+ */
 .screen-head-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 10px 12px;
+  flex-wrap: wrap;
   justify-content: space-between;
+}
+
+.screen-head-row h1 {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .screen-head-tools {
@@ -179,6 +177,9 @@ button {
 
 .head-actions {
   display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -897,9 +898,53 @@ button {
   padding-bottom: 24px;
 }
 
+.outline-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .outline-head h2 {
   margin: 0;
   font-size: 22px;
+  min-width: 0;
+}
+
+/* Editing is a mode, so it is visible as one rather than only in the pen. */
+.outline.is-editing .outline-points {
+  border-left-color: var(--accent);
+}
+
+.outline-text-input,
+.outline-cue-input,
+.outline-note-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  resize: none;
+  overflow: hidden;
+}
+
+.outline-cue-input {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.outline-note-input {
+  font-size: 13.5px;
+  color: var(--fg-muted);
+}
+
+.outline-subpoints.is-editing {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
 }
 
 .outline-head p {

@@ -21,6 +21,13 @@ import { copyToClipboard } from '../lib/exportNotes.js';
 const HIGHLIGHT_CLASS = 'marginalia-hl';
 const SWIPE_MIN = 45;
 const STYLE_ID = 'marginalia-highlighter-mode';
+// The share of the width at each edge that turns the page. Used both to decide
+// what a tap means and to keep tap-to-erase out of the way of it.
+const TURN_ZONE = 0.28;
+// Room at the top and bottom of the page for reaching the bars above and below
+// it. A finger aimed at the back button is wider than the gap above the first
+// line, and catching a highlight on the way there is the worst possible answer.
+const ERASE_EDGE = 44;
 const TURN_MS = 280;
 const TURN_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
@@ -269,6 +276,37 @@ const EpubView = forwardRef(function EpubView(
   eraseRef.current = eraseHighlight;
 
   /**
+   * The part of the page where a tap means "erase this highlight".
+   *
+   * Not all of it. The columns at either edge already belong to the page turn,
+   * and the strips above and below the text are where a hand goes to reach the
+   * bars — back to the library, the contents, the settings. A highlight can
+   * easily run through all of those, and having it answer there means the tap
+   * that was meant to leave the book deletes something instead.
+   *
+   * So a mark is only tappable across the middle of the page. The ends of a
+   * long highlight fall in the turn columns and turn the page, which is what
+   * tapping there does everywhere else on the page.
+   */
+  const eraseZone = useCallback(() => {
+    const stage = hostRef.current?.closest('.reader-stage');
+    if (!stage) return null;
+    const box = stage.getBoundingClientRect();
+    const scrolled = settingsRef.current.flow === 'scrolled';
+    // Continuously scrolled books have no turn columns to keep clear.
+    const edge = scrolled ? 0 : window.innerWidth * TURN_ZONE;
+    const zone = {
+      left: box.left + edge,
+      right: box.right - edge,
+      top: box.top + ERASE_EDGE,
+      bottom: box.bottom - ERASE_EDGE,
+    };
+    // A stage too small to hold a zone leaves the page to navigation.
+    if (zone.right - zone.left < 24 || zone.bottom - zone.top < 24) return null;
+    return zone;
+  }, []);
+
+  /**
    * Where every highlight sits on screen, in viewport coordinates.
    *
    * This exists because epub.js cannot be relied on to tell us a highlight was
@@ -279,7 +317,8 @@ const EpubView = forwardRef(function EpubView(
    */
   const measureMarks = useCallback(() => {
     const host = hostRef.current;
-    if (!host) {
+    const zone = eraseZone();
+    if (!host || !zone) {
       setMarkBoxes([]);
       return;
     }
@@ -292,18 +331,18 @@ const EpubView = forwardRef(function EpubView(
       for (const part of parts) {
         const box = part.getBoundingClientRect();
         if (box.width < 1 || box.height < 1) continue;
-        boxes.push({
-          id,
-          key: `${id}-${boxes.length}`,
-          left: box.left,
-          top: box.top,
-          width: box.width,
-          height: box.height,
-        });
+        // Clipped rather than dropped: a line running the width of the page
+        // stays tappable across the middle, and its ends turn the page.
+        const left = Math.max(box.left, zone.left);
+        const top = Math.max(box.top, zone.top);
+        const width = Math.min(box.right, zone.right) - left;
+        const height = Math.min(box.bottom, zone.bottom) - top;
+        if (width < 8 || height < 8) continue;
+        boxes.push({ id, key: `${id}-${boxes.length}`, left, top, width, height });
       }
     }
     setMarkBoxes(boxes);
-  }, []);
+  }, [eraseZone]);
 
   /**
    * The highlight under a point on screen.
@@ -315,6 +354,12 @@ const EpubView = forwardRef(function EpubView(
    * rectangles is the only reading that answers.
    */
   const markAt = useCallback((x, y) => {
+    // The same bounds the visible targets are clipped to, so the highlighter's
+    // own taps and the reader's agree about where erasing is possible.
+    const zone = eraseZone();
+    if (!zone) return null;
+    if (x < zone.left || x > zone.right || y < zone.top || y > zone.bottom) return null;
+
     const marks = document.querySelectorAll(`.${HIGHLIGHT_CLASS}[data-id]`);
     // Last drawn sits on top, so it is the one a tap means.
     for (const mark of [...marks].reverse()) {
@@ -333,7 +378,7 @@ const EpubView = forwardRef(function EpubView(
       };
     }
     return null;
-  }, []);
+  }, [eraseZone]);
 
   // A range can be flawless and still fail to become a highlight, so a trace is
   // closed when the mark is saved rather than when the drag ended.
@@ -512,8 +557,8 @@ const EpubView = forwardRef(function EpubView(
         return;
       }
       const width = window.innerWidth;
-      if (clientX < width * 0.28) turnPage('prev');
-      else if (clientX > width * 0.72) turnPage('next');
+      if (clientX < width * TURN_ZONE) turnPage('prev');
+      else if (clientX > width * (1 - TURN_ZONE)) turnPage('next');
       else onToggleChrome();
     },
     [onToggleChrome, turnPage],
@@ -1181,6 +1226,19 @@ const EpubView = forwardRef(function EpubView(
     <div
       className={highlighterOn ? 'epub-host-wrap is-highlighting' : 'epub-host-wrap'}
       style={{ padding: `2.5% ${settings.margin}%` }}
+      /*
+       * The margins around the page were dead: a tap there reached neither the
+       * frame nor any handler, so reaching for the top of the screen did
+       * nothing and the second, lower try landed on the text. They answer the
+       * same way the page does now — the strict target check is what keeps this
+       * from firing a second time for a tap that already went to the frame or
+       * to one of the highlight targets above it.
+       */
+      onClick={(event) => {
+        if (highlighterRef.current) return;
+        if (event.target !== event.currentTarget && event.target !== hostRef.current) return;
+        handleTap(event.clientX);
+      }}
     >
       <div ref={hostRef} className="epub-host" />
 

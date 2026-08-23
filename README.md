@@ -51,6 +51,13 @@ inside epub.js's iframe, which is where it was heard until an iPhone reported
 dozens of failed highlights and not one recorded gesture. The text is still
 measured inside the frame; only the listening moved out.
 
+Tapping a highlight erases or edits it across the middle of the page only. The
+columns at either edge already belong to the page turn, and the strips above and
+below the text are where a hand goes to reach the bars — so a highlight running
+through any of those does not answer there, and the tap turns the page or brings
+the chrome back as it would anywhere else. The margins around the page answer
+the same way rather than swallowing the tap.
+
 Tapping a highlight is answered by a small target of the app's own, laid over
 each mark in the top-level document. epub.js detects taps on its own marks by
 listening inside the book's iframe and matching coordinates, which is precisely

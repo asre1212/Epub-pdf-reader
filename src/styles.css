@@ -2504,6 +2504,8 @@ button {
  */
 .epub-mark-hit {
   position: fixed;
+  /* Never the double-tap zoom: these are asked to be tapped twice. */
+  touch-action: manipulation;
   z-index: 35;
   padding: 0;
   border: 0;

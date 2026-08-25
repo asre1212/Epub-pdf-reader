@@ -16,6 +16,7 @@ import { attachDragHighlighter } from '../lib/dragHighlight.js';
 import { recordTrace } from '../lib/highlighterTrace.js';
 import { colorHex } from '../lib/highlightColors.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
+import { createTapArbiter } from '../lib/tapArbiter.js';
 
 const BUFFER = 2; // pages kept rendered on either side of the viewport
 
@@ -66,6 +67,9 @@ const PdfView = forwardRef(function PdfView(
   settingsRef.current = settings;
 
   const closeMenu = useCallback(() => setMenu(null), []);
+
+  const tapArbiterRef = useRef(null);
+  if (!tapArbiterRef.current) tapArbiterRef.current = createTapArbiter();
 
   /* -------------------------------------------------------------- document */
 
@@ -294,6 +298,22 @@ const PdfView = forwardRef(function PdfView(
     [closeMenu, notify, onUndeleteHighlight, onDeleteHighlight],
   );
 
+  /** One tap opens the highlight; two erase it, when that is switched on. */
+  const tapHighlight = useCallback(
+    (hit) => {
+      const openMenu = () => setMenu({ mode: 'edit', id: hit.id, rect: hit.rect });
+      if (!settingsRef.current.tapToErase) {
+        openMenu();
+        return;
+      }
+      tapArbiterRef.current.tap(hit.id, {
+        onSingle: openMenu,
+        onDouble: () => eraseHighlight(hit.id),
+      });
+    },
+    [eraseHighlight],
+  );
+
   const readSelection = useCallback(() => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
@@ -331,8 +351,7 @@ const PdfView = forwardRef(function PdfView(
 
       const hit = highlightAt(event.clientX, event.clientY);
       if (hit) {
-        if (settingsRef.current.tapToErase) eraseHighlight(hit.id);
-        else setMenu({ mode: 'edit', id: hit.id, rect: hit.rect });
+        tapHighlight(hit);
         return;
       }
 
@@ -342,7 +361,7 @@ const PdfView = forwardRef(function PdfView(
       }
       onToggleChrome();
     },
-    [readSelection, highlightAt, eraseHighlight, menu, closeMenu, onToggleChrome],
+    [readSelection, highlightAt, tapHighlight, menu, closeMenu, onToggleChrome],
   );
 
   // Escape closes the toolbar rather than the book: capture the key before the
@@ -444,15 +463,17 @@ const PdfView = forwardRef(function PdfView(
       // eraser's chance to act before anything else reads it.
       onTap: (x, y) => {
         const hit = highlightAt(x, y);
-        if (hit && settingsRef.current.tapToErase) {
-          eraseHighlight(hit.id);
-          return;
-        }
         if (hit) {
-          setMenu({ mode: 'edit', id: hit.id, rect: hit.rect });
+          tapHighlight(hit);
           return;
         }
         onToggleChrome();
+      },
+      // Two fingers scroll the document while the highlighter has the surface.
+      onPan: ({ phase, stepY }) => {
+        if (phase !== 'move') return;
+        const scroller = scrollRef.current;
+        if (scroller) scroller.scrollTop -= stepY;
       },
       onMiss: (reason) =>
         notify(
@@ -470,7 +491,7 @@ const PdfView = forwardRef(function PdfView(
     pageBoxes,
     saveHighlight,
     highlightAt,
-    eraseHighlight,
+    tapHighlight,
     onToggleChrome,
     onShowDiagnostics,
     settings.flow,

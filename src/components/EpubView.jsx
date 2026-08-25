@@ -16,6 +16,7 @@ import {
 } from '../lib/dragHighlight.js';
 import { recordTrace } from '../lib/highlighterTrace.js';
 import { FONT_STACKS, THEMES } from '../lib/settings.js';
+import { createTapArbiter } from '../lib/tapArbiter.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
 const HIGHLIGHT_CLASS = 'marginalia-hl';
@@ -28,6 +29,9 @@ const TURN_ZONE = 0.28;
 // it. A finger aimed at the back button is wider than the gap above the first
 // line, and catching a highlight on the way there is the worst possible answer.
 const ERASE_EDGE = 44;
+// How far two fingers must travel before it counts as a page turn rather than a
+// hand resting on the screen.
+const PAN_TURN = 40;
 const TURN_MS = 280;
 const TURN_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
@@ -275,6 +279,38 @@ const EpubView = forwardRef(function EpubView(
   const eraseRef = useRef(eraseHighlight);
   eraseRef.current = eraseHighlight;
 
+  const tapArbiterRef = useRef(null);
+  if (!tapArbiterRef.current) tapArbiterRef.current = createTapArbiter();
+
+  /**
+   * What a tap on a highlight does.
+   *
+   * With double-tap erasing off, one tap opens the mark's menu as it always
+   * has. With it on, the two gestures compete for the same tap, so the menu
+   * waits out the double-tap window and a second tap erases instead — the
+   * ordinary resolution, and the reason the destructive one now takes two.
+   */
+  const tapMark = useCallback(
+    (mark) => {
+      markClickRef.current = Date.now();
+      const openMenu = () => setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+      if (!settingsRef.current.tapToErase) {
+        openMenu();
+        return;
+      }
+      tapArbiterRef.current.tap(mark.id, {
+        onSingle: openMenu,
+        onDouble: () => eraseRef.current(mark.id),
+      });
+    },
+    [],
+  );
+
+  // epub.js and the rendition's own handlers are wired once, so they reach the
+  // current arbiter through a ref rather than capturing the first one.
+  const tapMarkRef = useRef(tapMark);
+  tapMarkRef.current = tapMark;
+
   /**
    * The part of the page where a tap means "erase this highlight".
    *
@@ -415,15 +451,9 @@ const EpubView = forwardRef(function EpubView(
           highlight.cfi,
           { id: highlight.id },
           (event) => {
-            markClickRef.current = Date.now();
-            if (settingsRef.current.tapToErase) {
-              eraseRef.current(highlight.id);
-              return;
-            }
             const target = event?.currentTarget || event?.target;
             const box = target?.getBoundingClientRect?.();
-            setMenu({
-              mode: 'edit',
+            tapMarkRef.current({
               id: highlight.id,
               rect: box
                 ? { left: box.left, top: box.top, width: box.width, height: box.height }
@@ -710,9 +740,7 @@ const EpubView = forwardRef(function EpubView(
       onTap: (x, y) => {
         const mark = markAt(x, y);
         if (mark) {
-          markClickRef.current = Date.now();
-          if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
-          else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+          tapMark(mark);
           return;
         }
         handleTap(x);
@@ -725,6 +753,26 @@ const EpubView = forwardRef(function EpubView(
           'error',
           onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
         ),
+      /*
+       * Two fingers move through the book without putting the pen down. In a
+       * paginated book the direction is settled at the end, because a page turn
+       * is a single event and cannot follow a finger; a continuously scrolled
+       * one is dragged as it goes, which is what scrolling is.
+       */
+      onPan: ({ phase, dx, dy, stepY }) => {
+        if (settingsRef.current.flow === 'scrolled') {
+          if (phase !== 'move') return;
+          const container = hostRef.current?.querySelector('.epub-container');
+          if (container) container.scrollTop -= stepY;
+          return;
+        }
+        if (phase !== 'end') return;
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const travel = horizontal ? dx : dy;
+        if (Math.abs(travel) < PAN_TURN) return;
+        // Left, or up, goes forward: the page moves the way the fingers do.
+        turnPage(travel < 0 ? 'next' : 'prev');
+      },
       onTrace: (entry) => recordTrace({ ...entry, view: 'epub', flow: settingsRef.current.flow }),
     });
 
@@ -739,6 +787,8 @@ const EpubView = forwardRef(function EpubView(
     status,
     handleTap,
     markAt,
+    tapMark,
+    turnPage,
     closeTrace,
     notify,
     onShowDiagnostics,
@@ -873,9 +923,7 @@ const EpubView = forwardRef(function EpubView(
            */
           const mark = markAt(x, y);
           if (mark) {
-            markClickRef.current = Date.now();
-            if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
-            else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+            tapMarkRef.current(mark);
             return;
           }
 
@@ -1268,18 +1316,12 @@ const EpubView = forwardRef(function EpubView(
               height: `${box.height}px`,
             }}
             aria-label="Edit this highlight"
-            onClick={() => {
-              markClickRef.current = Date.now();
-              if (settingsRef.current.tapToErase) {
-                eraseHighlight(box.id);
-                return;
-              }
-              setMenu({
-                mode: 'edit',
+            onClick={() =>
+              tapMark({
                 id: box.id,
                 rect: { left: box.left, top: box.top, width: box.width, height: box.height },
-              });
-            }}
+              })
+            }
           />
         ))}
 

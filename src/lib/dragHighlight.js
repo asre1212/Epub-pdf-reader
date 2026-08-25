@@ -288,6 +288,7 @@ export function attachDragHighlighter({
   onCommit,
   onTap,
   onMiss,
+  onPan,
   onTrace,
 }) {
   let anchor = null;
@@ -299,6 +300,7 @@ export function attachDragHighlighter({
   let box = null;
   let handledAt = 0; // when the highlighter last finished a gesture
   let trace = null;
+  let pan = null; // the two-finger gesture, when one is running
   // Where the text being measured lives, which is not always where the finger
   // was heard. See `measureIn`.
   let page = { doc, offsetX: 0, offsetY: 0 };
@@ -459,6 +461,11 @@ export function attachDragHighlighter({
     onPreview(null);
   };
 
+  const cancelAll = () => {
+    pan = null;
+    cancel();
+  };
+
   /* ------------------------------------------------------------ touch path */
 
   /**
@@ -475,8 +482,47 @@ export function attachDragHighlighter({
     if (event.cancelable) event.preventDefault();
   };
 
+  /* ------------------------------------------------------------- two fingers */
+
+  /**
+   * The midpoint of a two-finger touch, which is what a pan follows.
+   *
+   * The highlighter takes the whole surface while it is on, so with one finger
+   * there is no way left to move through the book — no scroll, no swipe, and on
+   * a page of solid text nowhere safe to tap either. A second finger is the way
+   * out: it can only be deliberate, it cannot be confused with drawing across a
+   * line, and it leaves the highlighter exactly where it was.
+   */
+  const centre = (touches) => {
+    const a = touches[0];
+    const b = touches[1];
+    return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+  };
+
+  const startPan = (event) => {
+    // Whatever the first finger was drawing is abandoned, not committed: the
+    // second finger says this was never meant to be a highlight.
+    cancel();
+    const from = centre(event.touches);
+    pan = { from, last: from };
+    onPan?.({ phase: 'start', dx: 0, dy: 0, stepX: 0, stepY: 0 });
+  };
+
+  const endPan = () => {
+    if (!pan) return;
+    const { from, last } = pan;
+    pan = null;
+    handledAt = Date.now(); // no click should follow this either
+    onPan?.({ phase: 'end', dx: last.x - from.x, dy: last.y - from.y, stepX: 0, stepY: 0 });
+  };
+
   const onTouchStart = (event) => {
     if (event.touches.length > 1) {
+      if (onPan && isEnabled()) {
+        startPan(event);
+        claim(event);
+        return;
+      }
       cancel();
       return;
     }
@@ -490,17 +536,40 @@ export function attachDragHighlighter({
   };
 
   const onTouchMove = (event) => {
-    if (!active) return;
     if (event.touches.length > 1) {
+      // A finger joining mid-drag turns it into a pan from where it is now.
+      if (onPan && isEnabled() && !pan) startPan(event);
+      if (pan) {
+        const at = centre(event.touches);
+        const step = { x: at.x - pan.last.x, y: at.y - pan.last.y };
+        pan.last = at;
+        onPan?.({
+          phase: 'move',
+          dx: at.x - pan.from.x,
+          dy: at.y - pan.from.y,
+          stepX: step.x,
+          stepY: step.y,
+        });
+        claim(event);
+        return;
+      }
       cancel();
       return;
     }
+    if (!active) return;
     const touch = event.touches[0];
     move(touch.clientX, touch.clientY);
     claim(event);
   };
 
   const onTouchEnd = (event) => {
+    if (pan) {
+      // Wait for the last finger: lifting one of two is not the end of a pan.
+      if (event.touches.length > 0) return;
+      claim(event);
+      endPan();
+      return;
+    }
     if (!active) return;
     const touch = event.changedTouches[0];
     claim(event);
@@ -546,7 +615,7 @@ export function attachDragHighlighter({
   doc.addEventListener('touchstart', onTouchStart, active_);
   doc.addEventListener('touchmove', onTouchMove, active_);
   doc.addEventListener('touchend', onTouchEnd, active_);
-  doc.addEventListener('touchcancel', cancel, capture);
+  doc.addEventListener('touchcancel', cancelAll, capture);
   doc.addEventListener('mousedown', onMouseDown, active_);
   doc.addEventListener('mousemove', onMouseMove, active_);
   doc.addEventListener('mouseup', onMouseUp, active_);
@@ -556,7 +625,7 @@ export function attachDragHighlighter({
     doc.removeEventListener('touchstart', onTouchStart, active_);
     doc.removeEventListener('touchmove', onTouchMove, active_);
     doc.removeEventListener('touchend', onTouchEnd, active_);
-    doc.removeEventListener('touchcancel', cancel, capture);
+    doc.removeEventListener('touchcancel', cancelAll, capture);
     doc.removeEventListener('mousedown', onMouseDown, active_);
     doc.removeEventListener('mousemove', onMouseMove, active_);
     doc.removeEventListener('mouseup', onMouseUp, active_);

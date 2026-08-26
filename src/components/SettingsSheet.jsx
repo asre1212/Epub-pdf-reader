@@ -229,11 +229,11 @@ export default function SettingsSheet({ format, settings, onChange, onDiagnostic
             checked={!!settings.tapToErase}
             onChange={(e) => set({ tapToErase: e.target.checked })}
           />
-          <span>Tap a highlight to erase it</span>
+          <span>Double-tap a highlight to erase it</span>
         </label>
         <p className="set-hint">
           {settings.tapToErase
-            ? 'Tapping a highlight removes it straight away, with an undo on the message that follows.'
+            ? 'Two taps remove it, with an undo on the message that follows. One tap still opens its colours, note and delete button, a moment later.'
             : 'Tapping a highlight opens its colours, note and delete button.'}
         </p>
 

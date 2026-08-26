@@ -16,11 +16,22 @@ import {
 } from '../lib/dragHighlight.js';
 import { recordTrace } from '../lib/highlighterTrace.js';
 import { FONT_STACKS, THEMES } from '../lib/settings.js';
+import { createTapArbiter } from '../lib/tapArbiter.js';
 import { copyToClipboard } from '../lib/exportNotes.js';
 
 const HIGHLIGHT_CLASS = 'marginalia-hl';
 const SWIPE_MIN = 45;
 const STYLE_ID = 'marginalia-highlighter-mode';
+// The share of the width at each edge that turns the page. Used both to decide
+// what a tap means and to keep tap-to-erase out of the way of it.
+const TURN_ZONE = 0.28;
+// Room at the top and bottom of the page for reaching the bars above and below
+// it. A finger aimed at the back button is wider than the gap above the first
+// line, and catching a highlight on the way there is the worst possible answer.
+const ERASE_EDGE = 44;
+// How far two fingers must travel before it counts as a page turn rather than a
+// hand resting on the screen.
+const PAN_TURN = 40;
 const TURN_MS = 280;
 const TURN_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
@@ -220,6 +231,8 @@ const EpubView = forwardRef(function EpubView(
   // for the listener bound to the top-level document while it is up.
   const catcherRef = useRef(null);
   const dragDetachRef = useRef(null);
+  // The book document the current gesture is working in, and where it sits.
+  const activePageRef = useRef(null);
   // Counts events that actually arrive inside the book's frame, so a device can
   // say whether anything in there is heard at all.
   const witnessRef = useRef({ click: 0, touchstart: 0, touchend: 0 });
@@ -268,6 +281,69 @@ const EpubView = forwardRef(function EpubView(
   const eraseRef = useRef(eraseHighlight);
   eraseRef.current = eraseHighlight;
 
+  const tapArbiterRef = useRef(null);
+  if (!tapArbiterRef.current) tapArbiterRef.current = createTapArbiter();
+
+  /**
+   * What a tap on a highlight does.
+   *
+   * With double-tap erasing off, one tap opens the mark's menu as it always
+   * has. With it on, the two gestures compete for the same tap, so the menu
+   * waits out the double-tap window and a second tap erases instead — the
+   * ordinary resolution, and the reason the destructive one now takes two.
+   */
+  const tapMark = useCallback(
+    (mark) => {
+      markClickRef.current = Date.now();
+      const openMenu = () => setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+      if (!settingsRef.current.tapToErase) {
+        openMenu();
+        return;
+      }
+      tapArbiterRef.current.tap(mark.id, {
+        onSingle: openMenu,
+        onDouble: () => eraseRef.current(mark.id),
+      });
+    },
+    [],
+  );
+
+  // epub.js and the rendition's own handlers are wired once, so they reach the
+  // current arbiter through a ref rather than capturing the first one.
+  const tapMarkRef = useRef(tapMark);
+  tapMarkRef.current = tapMark;
+
+  /**
+   * The part of the page where a tap means "erase this highlight".
+   *
+   * Not all of it. The columns at either edge already belong to the page turn,
+   * and the strips above and below the text are where a hand goes to reach the
+   * bars — back to the library, the contents, the settings. A highlight can
+   * easily run through all of those, and having it answer there means the tap
+   * that was meant to leave the book deletes something instead.
+   *
+   * So a mark is only tappable across the middle of the page. The ends of a
+   * long highlight fall in the turn columns and turn the page, which is what
+   * tapping there does everywhere else on the page.
+   */
+  const eraseZone = useCallback(() => {
+    const stage = hostRef.current?.closest('.reader-stage');
+    if (!stage) return null;
+    const box = stage.getBoundingClientRect();
+    const scrolled = settingsRef.current.flow === 'scrolled';
+    // Continuously scrolled books have no turn columns to keep clear.
+    const edge = scrolled ? 0 : window.innerWidth * TURN_ZONE;
+    const zone = {
+      left: box.left + edge,
+      right: box.right - edge,
+      top: box.top + ERASE_EDGE,
+      bottom: box.bottom - ERASE_EDGE,
+    };
+    // A stage too small to hold a zone leaves the page to navigation.
+    if (zone.right - zone.left < 24 || zone.bottom - zone.top < 24) return null;
+    return zone;
+  }, []);
+
   /**
    * Where every highlight sits on screen, in viewport coordinates.
    *
@@ -279,7 +355,8 @@ const EpubView = forwardRef(function EpubView(
    */
   const measureMarks = useCallback(() => {
     const host = hostRef.current;
-    if (!host) {
+    const zone = eraseZone();
+    if (!host || !zone) {
       setMarkBoxes([]);
       return;
     }
@@ -292,18 +369,18 @@ const EpubView = forwardRef(function EpubView(
       for (const part of parts) {
         const box = part.getBoundingClientRect();
         if (box.width < 1 || box.height < 1) continue;
-        boxes.push({
-          id,
-          key: `${id}-${boxes.length}`,
-          left: box.left,
-          top: box.top,
-          width: box.width,
-          height: box.height,
-        });
+        // Clipped rather than dropped: a line running the width of the page
+        // stays tappable across the middle, and its ends turn the page.
+        const left = Math.max(box.left, zone.left);
+        const top = Math.max(box.top, zone.top);
+        const width = Math.min(box.right, zone.right) - left;
+        const height = Math.min(box.bottom, zone.bottom) - top;
+        if (width < 8 || height < 8) continue;
+        boxes.push({ id, key: `${id}-${boxes.length}`, left, top, width, height });
       }
     }
     setMarkBoxes(boxes);
-  }, []);
+  }, [eraseZone]);
 
   /**
    * The highlight under a point on screen.
@@ -315,6 +392,12 @@ const EpubView = forwardRef(function EpubView(
    * rectangles is the only reading that answers.
    */
   const markAt = useCallback((x, y) => {
+    // The same bounds the visible targets are clipped to, so the highlighter's
+    // own taps and the reader's agree about where erasing is possible.
+    const zone = eraseZone();
+    if (!zone) return null;
+    if (x < zone.left || x > zone.right || y < zone.top || y > zone.bottom) return null;
+
     const marks = document.querySelectorAll(`.${HIGHLIGHT_CLASS}[data-id]`);
     // Last drawn sits on top, so it is the one a tap means.
     for (const mark of [...marks].reverse()) {
@@ -333,7 +416,7 @@ const EpubView = forwardRef(function EpubView(
       };
     }
     return null;
-  }, []);
+  }, [eraseZone]);
 
   // A range can be flawless and still fail to become a highlight, so a trace is
   // closed when the mark is saved rather than when the drag ended.
@@ -370,15 +453,9 @@ const EpubView = forwardRef(function EpubView(
           highlight.cfi,
           { id: highlight.id },
           (event) => {
-            markClickRef.current = Date.now();
-            if (settingsRef.current.tapToErase) {
-              eraseRef.current(highlight.id);
-              return;
-            }
             const target = event?.currentTarget || event?.target;
             const box = target?.getBoundingClientRect?.();
-            setMenu({
-              mode: 'edit',
+            tapMarkRef.current({
               id: highlight.id,
               rect: box
                 ? { left: box.left, top: box.top, width: box.width, height: box.height }
@@ -512,8 +589,8 @@ const EpubView = forwardRef(function EpubView(
         return;
       }
       const width = window.innerWidth;
-      if (clientX < width * 0.28) turnPage('prev');
-      else if (clientX > width * 0.72) turnPage('next');
+      if (clientX < width * TURN_ZONE) turnPage('prev');
+      else if (clientX > width * (1 - TURN_ZONE)) turnPage('next');
       else onToggleChrome();
     },
     [onToggleChrome, turnPage],
@@ -603,16 +680,53 @@ const EpubView = forwardRef(function EpubView(
     const detach = attachDragHighlighter({
       doc: document,
       containerFor: (target) => target === catcherRef.current,
-      measureIn: () => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
-        if (!contents?.document || !frame) return null;
-        const rect = frame.getBoundingClientRect();
-        return { doc: contents.document, offsetX: rect.left, offsetY: rect.top };
+      /*
+       * Which of the book's documents the finger is in.
+       *
+       * A paginated book has one section on screen and this was written as if
+       * that were always so. Continuously scrolled, epub.js keeps several
+       * stacked, and taking the first meant measuring a chapter the reader had
+       * already scrolled past — the visible slice came out beyond the end of
+       * the frame, no words were found on it, and the fallback then searched
+       * the whole of the wrong chapter and highlighted whatever was nearest.
+       */
+      measureIn: (x, y) => {
+        const list = renditionRef.current?.getContents?.() || [];
+        let chosen = null;
+        let nearest = Infinity;
+        for (const contents of list) {
+          const frame = contents?.document?.defaultView?.frameElement;
+          if (!contents.document || !frame) continue;
+          const rect = frame.getBoundingClientRect();
+          // Distance to the frame, zero inside it. The catcher is wider than
+          // the page — it covers the margins either side — so a drag that
+          // begins in a margin is outside every frame and still has to land
+          // somewhere. The closest one is where it was meant for.
+          const dx = Math.max(rect.left - x, 0, x - rect.right);
+          const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+          const away = dx * dx + dy * dy;
+          if (away < nearest) {
+            nearest = away;
+            chosen = { contents, rect };
+          }
+          if (away === 0) break;
+        }
+        if (!chosen) return null;
+        activePageRef.current = {
+          contents: chosen.contents,
+          offsetX: chosen.rect.left,
+          offsetY: chosen.rect.top,
+        };
+        return {
+          doc: chosen.contents.document,
+          offsetX: chosen.rect.left,
+          offsetY: chosen.rect.top,
+        };
       },
+      // Called straight after measureIn, so it reads the section that was
+      // chosen rather than looking one up again and risking a different answer.
       visibleBox: () => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
+        const frame = activePageRef.current?.contents?.document?.defaultView?.frameElement;
         const container = frame?.closest?.('.epub-container');
         if (!frame || !container) return null;
         const inner = frame.getBoundingClientRect();
@@ -630,9 +744,8 @@ const EpubView = forwardRef(function EpubView(
           setPreview(null);
           return;
         }
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
-        const offset = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+        const page = activePageRef.current;
+        const offset = { left: page?.offsetX || 0, top: page?.offsetY || 0 };
         setPreview({
           color: colorHex(settingsRef.current.defaultColor),
           rects: rects.map((r) => ({
@@ -644,7 +757,12 @@ const EpubView = forwardRef(function EpubView(
         });
       },
       onCommit: ({ range, text, trace }) => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
+        // The section that owns the range, not whichever one is listed first:
+        // a CFI from the wrong document is a highlight in the wrong chapter.
+        const owner = range?.startContainer?.ownerDocument;
+        const list = renditionRef.current?.getContents?.() || [];
+        const contents =
+          list.find((item) => item.document === owner) || activePageRef.current?.contents;
         try {
           const cfiRange = contents?.cfiFromRange(range);
           if (!cfiRange) {
@@ -665,9 +783,7 @@ const EpubView = forwardRef(function EpubView(
       onTap: (x, y) => {
         const mark = markAt(x, y);
         if (mark) {
-          markClickRef.current = Date.now();
-          if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
-          else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+          tapMark(mark);
           return;
         }
         handleTap(x);
@@ -680,6 +796,26 @@ const EpubView = forwardRef(function EpubView(
           'error',
           onShowDiagnostics && { label: 'Why?', onAct: onShowDiagnostics },
         ),
+      /*
+       * Two fingers move through the book without putting the pen down. In a
+       * paginated book the direction is settled at the end, because a page turn
+       * is a single event and cannot follow a finger; a continuously scrolled
+       * one is dragged as it goes, which is what scrolling is.
+       */
+      onPan: ({ phase, dx, dy, stepY }) => {
+        if (settingsRef.current.flow === 'scrolled') {
+          if (phase !== 'move') return;
+          const container = hostRef.current?.querySelector('.epub-container');
+          if (container) container.scrollTop -= stepY;
+          return;
+        }
+        if (phase !== 'end') return;
+        const horizontal = Math.abs(dx) >= Math.abs(dy);
+        const travel = horizontal ? dx : dy;
+        if (Math.abs(travel) < PAN_TURN) return;
+        // Left, or up, goes forward: the page moves the way the fingers do.
+        turnPage(travel < 0 ? 'next' : 'prev');
+      },
       onTrace: (entry) => recordTrace({ ...entry, view: 'epub', flow: settingsRef.current.flow }),
     });
 
@@ -694,6 +830,8 @@ const EpubView = forwardRef(function EpubView(
     status,
     handleTap,
     markAt,
+    tapMark,
+    turnPage,
     closeTrace,
     notify,
     onShowDiagnostics,
@@ -828,9 +966,7 @@ const EpubView = forwardRef(function EpubView(
            */
           const mark = markAt(x, y);
           if (mark) {
-            markClickRef.current = Date.now();
-            if (settingsRef.current.tapToErase) eraseRef.current(mark.id);
-            else setMenu({ mode: 'edit', id: mark.id, rect: mark.rect });
+            tapMarkRef.current(mark);
             return;
           }
 
@@ -1018,7 +1154,27 @@ const EpubView = forwardRef(function EpubView(
     }
     const contents = rendition.getContents?.() || [];
     add('book is rendered', contents.length > 0, `${contents.length} section document(s)`);
-    const content = contents[0];
+    /*
+     * The section actually on screen, not the first one listed. A continuously
+     * scrolled book keeps several stacked, and a self-test that reports on a
+     * chapter the reader scrolled past would have said everything was fine
+     * while the highlighter was measuring the wrong document.
+     */
+    const container = rendition.getContents?.()?.[0]?.document?.defaultView?.frameElement?.closest?.(
+      '.epub-container',
+    );
+    const view = container?.getBoundingClientRect();
+    const middle = view ? view.top + view.height / 2 : 0;
+    const content =
+      contents.find((item) => {
+        const box = item?.document?.defaultView?.frameElement?.getBoundingClientRect();
+        return box && middle >= box.top && middle <= box.bottom;
+      }) || contents[0];
+    add(
+      'section on screen chosen',
+      !!content,
+      contents.length > 1 ? `${contents.indexOf(content) + 1} of ${contents.length}` : '',
+    );
     const doc = content?.document;
     const frame = doc?.defaultView?.frameElement;
     if (!doc || !frame) {
@@ -1032,8 +1188,7 @@ const EpubView = forwardRef(function EpubView(
     add('drag listener bound', !!dragDetachRef.current, highlighterOn ? '' : 'highlighter is off');
     add('page has text', countTextNodes(doc) > 0, `${countTextNodes(doc)} text nodes`);
 
-    const container = frame.closest?.('.epub-container');
-    const outer = container?.getBoundingClientRect();
+    const outer = frame.closest?.('.epub-container')?.getBoundingClientRect();
     const box = outer && {
       left: outer.left - rect.left,
       top: outer.top - rect.top,
@@ -1181,6 +1336,19 @@ const EpubView = forwardRef(function EpubView(
     <div
       className={highlighterOn ? 'epub-host-wrap is-highlighting' : 'epub-host-wrap'}
       style={{ padding: `2.5% ${settings.margin}%` }}
+      /*
+       * The margins around the page were dead: a tap there reached neither the
+       * frame nor any handler, so reaching for the top of the screen did
+       * nothing and the second, lower try landed on the text. They answer the
+       * same way the page does now — the strict target check is what keeps this
+       * from firing a second time for a tap that already went to the frame or
+       * to one of the highlight targets above it.
+       */
+      onClick={(event) => {
+        if (highlighterRef.current) return;
+        if (event.target !== event.currentTarget && event.target !== hostRef.current) return;
+        handleTap(event.clientX);
+      }}
     >
       <div ref={hostRef} className="epub-host" />
 
@@ -1210,18 +1378,12 @@ const EpubView = forwardRef(function EpubView(
               height: `${box.height}px`,
             }}
             aria-label="Edit this highlight"
-            onClick={() => {
-              markClickRef.current = Date.now();
-              if (settingsRef.current.tapToErase) {
-                eraseHighlight(box.id);
-                return;
-              }
-              setMenu({
-                mode: 'edit',
+            onClick={() =>
+              tapMark({
                 id: box.id,
                 rect: { left: box.left, top: box.top, width: box.width, height: box.height },
-              });
-            }}
+              })
+            }
           />
         ))}
 

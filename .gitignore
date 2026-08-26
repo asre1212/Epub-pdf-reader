@@ -5,6 +5,9 @@ dev-dist/
 # Copied from pdfjs-dist at build time by scripts/copy-pdfjs-assets.mjs
 public/pdfjs/
 
+# Test books for the browser harness, built by scripts/make-harness-book.mjs
+public/harness-book.*
+
 .DS_Store
 *.local
 

@@ -51,6 +51,27 @@ inside epub.js's iframe, which is where it was heard until an iPhone reported
 dozens of failed highlights and not one recorded gesture. The text is still
 measured inside the frame; only the listening moved out.
 
+Erasing takes two taps. One destructive gesture under the lightest possible
+touch, next to a page turn and a back button that are also taps, was one too
+many — so a double tap erases and a single tap opens the highlight's colours,
+note and delete button as before. The single tap waits out the double-tap
+window before it acts, since until that closes there is no telling which gesture
+it is; that pause is only paid when double-tap erasing is switched on.
+
+Two fingers move through the book without putting the pen down. While the
+highlighter is on it owns the whole surface, so there is no scroll, no swipe and
+on a page of solid text nowhere safe to tap either. A two-finger swipe turns the
+page, or drags a continuously scrolled book along, and the highlighter stays
+exactly where it was. A second finger can only be deliberate, and it cannot be
+confused with drawing across a line.
+
+Tapping a highlight erases or edits it across the middle of the page only. The
+columns at either edge already belong to the page turn, and the strips above and
+below the text are where a hand goes to reach the bars — so a highlight running
+through any of those does not answer there, and the tap turns the page or brings
+the chrome back as it would anywhere else. The margins around the page answer
+the same way rather than swallowing the tap.
+
 Tapping a highlight is answered by a small target of the app's own, laid over
 each mark in the top-level document. epub.js detects taps on its own marks by
 listening inside the book's iframe and matching coordinates, which is precisely

@@ -219,8 +219,8 @@ export default function Reader({
         <div className="highlightbar">
           <span className="highlightbar-hint">
             {settings.tapToErase
-              ? 'Drag across text to highlight, tap a highlight to erase'
-              : 'Drag across text to highlight'}
+              ? 'Drag to highlight · double-tap one to erase · two fingers to move on'
+              : 'Drag to highlight · two fingers to move on'}
           </span>
           <div className="swatch-row" role="group" aria-label="Highlighter colour">
             {HIGHLIGHT_COLORS.map((color) => (

@@ -231,6 +231,8 @@ const EpubView = forwardRef(function EpubView(
   // for the listener bound to the top-level document while it is up.
   const catcherRef = useRef(null);
   const dragDetachRef = useRef(null);
+  // The book document the current gesture is working in, and where it sits.
+  const activePageRef = useRef(null);
   // Counts events that actually arrive inside the book's frame, so a device can
   // say whether anything in there is heard at all.
   const witnessRef = useRef({ click: 0, touchstart: 0, touchend: 0 });
@@ -678,16 +680,53 @@ const EpubView = forwardRef(function EpubView(
     const detach = attachDragHighlighter({
       doc: document,
       containerFor: (target) => target === catcherRef.current,
-      measureIn: () => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
-        if (!contents?.document || !frame) return null;
-        const rect = frame.getBoundingClientRect();
-        return { doc: contents.document, offsetX: rect.left, offsetY: rect.top };
+      /*
+       * Which of the book's documents the finger is in.
+       *
+       * A paginated book has one section on screen and this was written as if
+       * that were always so. Continuously scrolled, epub.js keeps several
+       * stacked, and taking the first meant measuring a chapter the reader had
+       * already scrolled past — the visible slice came out beyond the end of
+       * the frame, no words were found on it, and the fallback then searched
+       * the whole of the wrong chapter and highlighted whatever was nearest.
+       */
+      measureIn: (x, y) => {
+        const list = renditionRef.current?.getContents?.() || [];
+        let chosen = null;
+        let nearest = Infinity;
+        for (const contents of list) {
+          const frame = contents?.document?.defaultView?.frameElement;
+          if (!contents.document || !frame) continue;
+          const rect = frame.getBoundingClientRect();
+          // Distance to the frame, zero inside it. The catcher is wider than
+          // the page — it covers the margins either side — so a drag that
+          // begins in a margin is outside every frame and still has to land
+          // somewhere. The closest one is where it was meant for.
+          const dx = Math.max(rect.left - x, 0, x - rect.right);
+          const dy = Math.max(rect.top - y, 0, y - rect.bottom);
+          const away = dx * dx + dy * dy;
+          if (away < nearest) {
+            nearest = away;
+            chosen = { contents, rect };
+          }
+          if (away === 0) break;
+        }
+        if (!chosen) return null;
+        activePageRef.current = {
+          contents: chosen.contents,
+          offsetX: chosen.rect.left,
+          offsetY: chosen.rect.top,
+        };
+        return {
+          doc: chosen.contents.document,
+          offsetX: chosen.rect.left,
+          offsetY: chosen.rect.top,
+        };
       },
+      // Called straight after measureIn, so it reads the section that was
+      // chosen rather than looking one up again and risking a different answer.
       visibleBox: () => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
+        const frame = activePageRef.current?.contents?.document?.defaultView?.frameElement;
         const container = frame?.closest?.('.epub-container');
         if (!frame || !container) return null;
         const inner = frame.getBoundingClientRect();
@@ -705,9 +744,8 @@ const EpubView = forwardRef(function EpubView(
           setPreview(null);
           return;
         }
-        const contents = renditionRef.current?.getContents?.()?.[0];
-        const frame = contents?.document?.defaultView?.frameElement;
-        const offset = frame ? frame.getBoundingClientRect() : { left: 0, top: 0 };
+        const page = activePageRef.current;
+        const offset = { left: page?.offsetX || 0, top: page?.offsetY || 0 };
         setPreview({
           color: colorHex(settingsRef.current.defaultColor),
           rects: rects.map((r) => ({
@@ -719,7 +757,12 @@ const EpubView = forwardRef(function EpubView(
         });
       },
       onCommit: ({ range, text, trace }) => {
-        const contents = renditionRef.current?.getContents?.()?.[0];
+        // The section that owns the range, not whichever one is listed first:
+        // a CFI from the wrong document is a highlight in the wrong chapter.
+        const owner = range?.startContainer?.ownerDocument;
+        const list = renditionRef.current?.getContents?.() || [];
+        const contents =
+          list.find((item) => item.document === owner) || activePageRef.current?.contents;
         try {
           const cfiRange = contents?.cfiFromRange(range);
           if (!cfiRange) {
@@ -1111,7 +1154,27 @@ const EpubView = forwardRef(function EpubView(
     }
     const contents = rendition.getContents?.() || [];
     add('book is rendered', contents.length > 0, `${contents.length} section document(s)`);
-    const content = contents[0];
+    /*
+     * The section actually on screen, not the first one listed. A continuously
+     * scrolled book keeps several stacked, and a self-test that reports on a
+     * chapter the reader scrolled past would have said everything was fine
+     * while the highlighter was measuring the wrong document.
+     */
+    const container = rendition.getContents?.()?.[0]?.document?.defaultView?.frameElement?.closest?.(
+      '.epub-container',
+    );
+    const view = container?.getBoundingClientRect();
+    const middle = view ? view.top + view.height / 2 : 0;
+    const content =
+      contents.find((item) => {
+        const box = item?.document?.defaultView?.frameElement?.getBoundingClientRect();
+        return box && middle >= box.top && middle <= box.bottom;
+      }) || contents[0];
+    add(
+      'section on screen chosen',
+      !!content,
+      contents.length > 1 ? `${contents.indexOf(content) + 1} of ${contents.length}` : '',
+    );
     const doc = content?.document;
     const frame = doc?.defaultView?.frameElement;
     if (!doc || !frame) {
@@ -1125,8 +1188,7 @@ const EpubView = forwardRef(function EpubView(
     add('drag listener bound', !!dragDetachRef.current, highlighterOn ? '' : 'highlighter is off');
     add('page has text', countTextNodes(doc) > 0, `${countTextNodes(doc)} text nodes`);
 
-    const container = frame.closest?.('.epub-container');
-    const outer = container?.getBoundingClientRect();
+    const outer = frame.closest?.('.epub-container')?.getBoundingClientRect();
     const box = outer && {
       left: outer.left - rect.left,
       top: outer.top - rect.top,

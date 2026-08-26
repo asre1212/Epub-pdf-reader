@@ -332,7 +332,10 @@ export function attachDragHighlighter({
   const begin = (x, y, target, pointer) => {
     if (!isEnabled()) return false;
     if (containerFor && !containerFor(target)) return false;
-    page = measureIn?.() || { doc, offsetX: 0, offsetY: 0 };
+    // The point decides which document is measured: a continuously scrolled
+    // book has several on screen at once, and only one of them is under the
+    // finger.
+    page = measureIn?.(x, y) || { doc, offsetX: 0, offsetY: 0 };
     if (!page.doc) return false;
     const start = local(x, y);
     // Measured once per drag; the page cannot move while we hold the gesture.

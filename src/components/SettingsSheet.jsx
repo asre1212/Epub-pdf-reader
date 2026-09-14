@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { HIGHLIGHT_COLORS } from '../lib/highlightColors.js';
 import { THEMES } from '../lib/settings.js';
 
@@ -34,7 +35,14 @@ function Segmented({ options, value, onChange, label }) {
 export default function SettingsSheet({ format, settings, onChange, onDiagnostics, onClose }) {
   const isEpub = format === 'epub';
   const set = (patch) => onChange(patch);
-  const reducedMotion = !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const [reducedMotion, setReducedMotion] = useState(() =>
+    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   return (
     <div className="sheet-backdrop" onPointerDown={onClose}>
@@ -71,7 +79,7 @@ export default function SettingsSheet({ format, settings, onChange, onDiagnostic
             value={settings.flow}
             onChange={(flow) => set({ flow })}
             options={[
-              { value: 'paginated', label: isEpub ? 'Page turns' : 'Snap to page' },
+              { value: 'paginated', label: 'Page turns' },
               { value: 'scrolled', label: 'Continuous scroll' },
             ]}
           />
@@ -81,12 +89,12 @@ export default function SettingsSheet({ format, settings, onChange, onDiagnostic
                 ? 'Tap the left or right edge, swipe, or use the arrow keys.'
                 : 'One long column you scroll through, chapter after chapter.'
               : settings.flow === 'paginated'
-                ? 'Scrolling settles on one page at a time.'
+                ? 'Swipe left or right, tap an edge, or use the page arrows. When zoomed in, drag to pan instead.'
                 : 'Pages run together in one continuous scroll.'}
           </p>
         </Row>
 
-        {isEpub && settings.flow === 'paginated' && (
+        {settings.flow === 'paginated' && (
           <>
             <label className="toggle toggle-row">
               <input

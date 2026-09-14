@@ -24,11 +24,16 @@ export default function Library({
   onOpen,
   onDelete,
   onRename,
+  onRepairCover,
+  onAutoRepairCover,
+  onReplaceCover,
   onOpenAbout,
   onOpenSync,
   updateReady,
 }) {
   const fileInput = useRef(null);
+  const coverInput = useRef(null);
+  const coverBook = useRef(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('recent');
   const [menuFor, setMenuFor] = useState(null);
@@ -89,11 +94,15 @@ export default function Library({
     const warning = count
       ? `Delete “${book.title}” and its ${count} highlight${count === 1 ? '' : 's'}?`
       : `Delete “${book.title}”?`;
-    if (window.confirm(warning)) onDelete(book);
+    if (window.confirm(warning + ' This also deletes its written chapter and book summaries.')) onDelete(book);
   };
 
   return (
     <div className="screen">
+      <input ref={coverInput} type="file" accept="image/*" hidden onChange={e => {
+        const file = e.target.files?.[0]; e.target.value = '';
+        if (file && coverBook.current) onReplaceCover(coverBook.current, file);
+      }} />
       <header className="screen-head">
         <div className="screen-head-row">
           <h1>Library</h1>
@@ -217,7 +226,7 @@ export default function Library({
               <li key={book.id} className="card">
                 <button type="button" className="card-open" onClick={() => onOpen(book)}>
                   <span className="card-cover">
-                    <Cover book={book} />
+                    <Cover book={book} onInvalid={onAutoRepairCover} />
                     {percent > 0 && (
                       <span className="card-progress" aria-hidden="true">
                         <span style={{ width: `${Math.min(100, percent)}%` }} />
@@ -262,6 +271,8 @@ export default function Library({
                     <button type="button" onClick={() => rename(book)}>
                       Rename
                     </button>
+                    <button type="button" disabled={book.missingFile} onClick={() => { setMenuFor(null); onRepairCover(book); }}>Repair cover</button>
+                    <button type="button" onClick={() => { coverBook.current = book; setMenuFor(null); coverInput.current?.click(); }}>Choose cover image</button>
                     <button type="button" className="danger" onClick={() => confirmDelete(book)}>
                       Delete
                     </button>

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 
 /** Renders a stored cover Blob, falling back to a generated title card. */
-export default function Cover({ book, className = '' }) {
+export default function Cover({ book, className = '', onInvalid }) {
   const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { if (!book?.cover) onInvalid?.(book); }, [book?.id, book?.cover, onInvalid]);
 
   useEffect(() => {
+    setFailed(false);
     if (!book?.cover) {
       setUrl(null);
       return undefined;
@@ -14,8 +17,8 @@ export default function Cover({ book, className = '' }) {
     return () => URL.revokeObjectURL(objectUrl);
   }, [book?.cover]);
 
-  if (url) {
-    return <img className={`cover ${className}`} src={url} alt="" loading="lazy" decoding="async" />;
+  if (url && !failed) {
+    return <img className={`cover ${className}`} src={url} onError={() => { setFailed(true); onInvalid?.(book); }} alt="" loading="lazy" decoding="async" />;
   }
 
   // Deterministic hue so a given book always gets the same placeholder.

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const server = spawn('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', '4173'], { stdio: 'inherit' });
+const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '4173', '--strictPort'], { stdio: 'inherit' });
 let browser;
 try {
   let ready = false;
@@ -46,10 +46,12 @@ try {
     } catch {}
     if (await db.getBook('rollback-book')) throw new Error('Restore did not roll back');
     const { importFile } = await import('/src/lib/importBook.js');
+    const fixtureBooks = {};
     for (const format of ['epub', 'pdf']) {
       const response = await fetch('/tests/fixtures/book.' + format);
       const file = new File([await response.blob()], 'book.' + format);
       const result = await importFile(file);
+      fixtureBooks[format] = { id: result.book.id, title: result.book.title };
       if (!(await db.hasBookFile(result.book.id))) throw new Error('Imported file missing');
       if (format === 'pdf' && !result.book.cover) throw new Error('PDF fixture cover missing');
       if (format === 'pdf') await db.putHighlight({ id: 'pdf-drawer', bookId: result.book.id, format: 'pdf', page: 1, text: 'Drawer test quote', rects: [], createdAt: Date.now() });
@@ -68,7 +70,7 @@ try {
       zip.file('OEBPS/Images/front.png', await png.arrayBuffer());
       if (!(await extractEpubCover(await zip.generateAsync({ type: 'blob' })))) throw new Error('EPUB cover extraction failed: ' + version);
     }
-    return true;
+    return fixtureBooks;
   });
   assert.ok(dbChecks);
   console.log('PASS: real IndexedDB backup, restore rollback, tombstones, stale deletion, EPUB/PDF imports');
@@ -105,9 +107,11 @@ try {
   await page.getByRole('tab', { name: /Highlights/ }).click();
   await page.getByText('Drawer test quote').click();
   await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await page.waitForFunction(async id => (await (await import('/src/lib/db.js')).getBook(id)).location === 2, dbChecks.pdf.id);
   await page.getByRole('button', { name: 'Previous page', exact: true }).click();
+  await page.waitForFunction(async id => (await (await import('/src/lib/db.js')).getBook(id)).location === 1, dbChecks.pdf.id);
   await page.getByRole('button', { name: 'Back to library', exact: true }).click();
-  await page.locator('.card-open').filter({ has: page.locator('.chip-epub') }).filter({ hasNotText: 'NOTES ONLY' }).last().click();
+  await page.locator('.card-open').filter({ has: page.locator('.card-title', { hasText: dbChecks.epub.title }) }).first().click();
   await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => f.contentDocument?.body?.textContent?.trim()));
   await page.getByRole('button', { name: 'Next page', exact: true }).click();
   await page.getByRole('button', { name: 'Previous page', exact: true }).click();

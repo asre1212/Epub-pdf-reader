@@ -34,7 +34,15 @@ const KEY = 'reader-settings';
 
 export async function loadSettings() {
   const stored = await getPref(KEY, null);
-  return { ...DEFAULT_SETTINGS, ...(stored || {}) };
+  const next = { ...DEFAULT_SETTINGS, ...(stored || {}) };
+  const ranges = { fontSize: [70, 260], lineHeight: [1, 2.4], letterSpacing: [-0.5, 2], margin: [0, 22], pdfZoom: [0.5, 3] };
+  for (const [key, [min, max]] of Object.entries(ranges)) {
+    next[key] = Number.isFinite(next[key]) ? Math.min(max, Math.max(min, next[key])) : DEFAULT_SETTINGS[key];
+  }
+  for (const [key, options] of Object.entries({ theme: Object.keys(THEMES), flow: ['paginated', 'scrolled'], pdfFit: ['width', 'page'], fontFamily: ['serif', 'sans', 'publisher'] })) {
+    if (!options.includes(next[key])) next[key] = DEFAULT_SETTINGS[key];
+  }
+  return next;
 }
 
 export async function saveSettings(settings) {

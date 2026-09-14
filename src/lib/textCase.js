@@ -16,8 +16,9 @@ export function sentenceCase(text) {
   const at = [...text].findIndex((character) => character.toLowerCase() !== character.toUpperCase());
   // No cased letters at all — a number, a symbol, or a script without case.
   if (at === -1) return text;
-  const letter = text[at];
+  const offset = [...text].slice(0, at).join('').length;
+  const letter = [...text][at];
   const upper = letter.toUpperCase();
   if (upper === letter) return text;
-  return text.slice(0, at) + upper + text.slice(at + 1);
+  return text.slice(0, offset) + upper + text.slice(offset + letter.length);
 }

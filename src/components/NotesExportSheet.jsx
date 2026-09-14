@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { downloadBackup } from '../lib/backup.js';
-import { downloadText, highlightsToMarkdown, highlightsToText } from '../lib/exportNotes.js';
+import { downloadText, highlightsToMarkdown, highlightsToText, cornellToMarkdown, outlineToMarkdown } from '../lib/exportNotes.js';
 import { canPrint, printNotes } from '../lib/printNotes.js';
 
 function Row({ title, detail, action, onClick, disabled, busy }) {
@@ -17,6 +17,8 @@ function Row({ title, detail, action, onClick, disabled, busy }) {
 
 export default function NotesExportSheet({
   groups,
+  studyDoc,
+  studyView,
   shown,
   total,
   filtered,
@@ -29,14 +31,16 @@ export default function NotesExportSheet({
   const stamp = new Date().toISOString().slice(0, 10);
   const scope = filtered ? `the ${shown} highlight${shown === 1 ? '' : 's'} shown` : 'every highlight';
 
+  const studyText = studyDoc ? (studyView === 'outline' ? outlineToMarkdown(studyDoc) : cornellToMarkdown(studyDoc)) : null;
+  const hasExport = !!studyDoc || shown > 0;
   const flatHighlights = groups.flatMap((group) => group.entries.map((e) => e.highlight));
 
   const saveBackup = async () => {
     setBusy('backup');
     try {
-      const counts = await downloadBackup(filtered ? flatHighlights : null);
+      const counts = await downloadBackup();
       notify(
-        `Backup saved — ${counts.highlights} highlight${counts.highlights === 1 ? '' : 's'} from ${counts.books} book${counts.books === 1 ? '' : 's'}`,
+        `Backup prepared — ${counts.highlights} highlight${counts.highlights === 1 ? '' : 's'} from ${counts.books} book${counts.books === 1 ? '' : 's'}`,
         'success',
       );
       onClose();
@@ -53,6 +57,7 @@ export default function NotesExportSheet({
     try {
       const report = await onRestoreBackup(file);
       const parts = [];
+      if (report.sheets) parts.push(`${report.sheets} study sheets restored`);
       if (report.restored) {
         parts.push(`${report.restored} highlight${report.restored === 1 ? '' : 's'} restored`);
       }
@@ -94,40 +99,40 @@ export default function NotesExportSheet({
       >
         <div className="sheet-grip" aria-hidden="true" />
         <h2 className="sheet-title">Export &amp; backup</h2>
-        <p className="set-hint">Covers {scope}, in the order shown.</p>
+        <p className="set-hint">{studyDoc ? `Exports the complete study sheet for ${studyDoc.book.title}.` : `Exports ${scope}, in the order shown.`} Backups always include all notes and summaries.</p>
 
         <div className="exportgroup">
           <h3>Export</h3>
           <Row
             title="PDF"
-            detail="A formatted document, one section per book."
+            detail="Opens Print; choose Save to PDF in the system dialog."
             action="Export"
-            disabled={!shown || !canPrint}
+            disabled={!hasExport || !canPrint}
             onClick={() => {
               onClose();
               // Let the sheet unmount so it is not captured in the printout.
-              setTimeout(() => printNotes(`Highlights ${stamp}`), 250);
+              setTimeout(() => { if (!printNotes(`Highlights ${stamp}`)) notify('Could not open Print. Please try again.', 'error'); }, 250);
             }}
           />
           <Row
             title="Markdown"
             detail="Block quotes and notes, ready for a notes app."
             action=".md"
-            disabled={!shown}
+            disabled={!hasExport}
             onClick={() => {
-              downloadText(`highlights-${stamp}.md`, highlightsToMarkdown(groups), 'text/markdown');
-              notify('Markdown file saved', 'success');
+              downloadText(`highlights-${stamp}.md`, studyText ?? highlightsToMarkdown(groups), 'text/markdown');
+              notify('Markdown download started', 'success');
               onClose();
             }}
           />
           <Row
             title="Plain text"
-            detail="No formatting, for anywhere else."
+            detail={studyDoc ? "Complete study sheet as readable Markdown text." : "No formatting, for anywhere else."}
             action=".txt"
-            disabled={!shown}
+            disabled={!hasExport}
             onClick={() => {
-              downloadText(`highlights-${stamp}.txt`, highlightsToText(groups));
-              notify('Text file saved', 'success');
+              downloadText(`highlights-${stamp}.txt`, studyText ?? highlightsToText(groups));
+              notify('Text download started', 'success');
               onClose();
             }}
           />
@@ -137,9 +142,9 @@ export default function NotesExportSheet({
           <h3>Backup</h3>
           <Row
             title="Save a backup"
-            detail="A JSON file this app can read back, keeping colours, notes and positions."
+            detail="All books, projects, highlights and written summaries. Book files are separate."
             action=".json"
-            disabled={!shown}
+            disabled={false}
             busy={busy === 'backup'}
             onClick={saveBackup}
           />

@@ -1,3 +1,4 @@
+import { hasUnsavedDrafts } from './lib/useDraft.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AboutSheet from './components/AboutSheet.jsx';
 import Library from './components/Library.jsx';
@@ -17,6 +18,7 @@ import {
   deleteBook as dbDeleteBook,
   deleteHighlight as dbDeleteHighlight,
   estimateUsage,
+  requestPersistentStorage,
   listBooks,
   listHighlights,
   putHighlight,
@@ -34,9 +36,9 @@ import {
 } from './lib/db.js';
 import { restoreBackup } from './lib/backup.js';
 import { getSyncConfig, syncNow } from './lib/sync.js';
-import { importFiles } from './lib/importBook.js';
+import { importFilesSerial as importFiles, repairBookCover } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
-import { drainSharedFiles } from './lib/shareInbox.js';
+import { drainSharedFiles, acknowledgeSharedFile } from './lib/shareInbox.js';
 import NameDialog from './components/NameDialog.jsx';
 
 export default function App() {
@@ -58,6 +60,10 @@ export default function App() {
   const [usage, setUsage] = useState(null);
   const toastId = useRef(0);
   const syncTimer = useRef(null);
+  const scheduleSyncRef = useRef(() => {});
+  const importCount = useRef(0);
+  const coverAttempts = useRef(new Set());
+  const coverQueue = useRef(Promise.resolve());
   const lastSyncAttempt = useRef(0);
   const update = useUpdateState();
 
@@ -105,6 +111,7 @@ export default function App() {
         refreshProjects(),
         refreshSummaries(),
       ]);
+      void requestPersistentStorage();
       setSettings(stored);
       setSettingsReady(true);
     })().catch((err) => {
@@ -116,22 +123,30 @@ export default function App() {
 
   /* --------------------------------------------------------------- updates */
 
-  // Auto-update waits until nobody is mid-page: a reload during reading is
-  // jarring even though the position is saved. Otherwise the banner offers it.
+  // Recheck at activation time: drafts may begin while an update is waiting.
   useEffect(() => {
-    if (!update.needRefresh || !update.autoUpdate || update.applying || reading) return undefined;
-    notify('Installing the latest version…');
-    const timer = setTimeout(applyUpdate, 1200);
-    return () => clearTimeout(timer);
-  }, [update.needRefresh, update.autoUpdate, update.applying, reading, notify]);
+    if (!update.needRefresh || !update.autoUpdate || update.applying) return undefined;
+    const timer = setInterval(() => {
+      if (reading || importing || tab === 'notes' || hasUnsavedDrafts() ||
+          document.querySelector('[role="dialog"]') ||
+          document.activeElement?.matches('input, textarea, [contenteditable="true"]')) return;
+      applyUpdate();
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [update.needRefresh, update.autoUpdate, update.applying, reading, importing, tab]);
 
   useEffect(() => {
     if (update.needRefresh) setUpdateDismissed(false);
   }, [update.needRefresh]);
 
   useEffect(() => {
-    if (update.firstInstall) notify('Ready to read offline', 'success');
+    if (update.firstInstall) notify('App and PDF reading resources saved offline.', 'success');
   }, [update.firstInstall, notify]);
+
+  const applyUpdateSafely = useCallback(() => {
+    if (hasUnsavedDrafts()) { notify('Save or cancel your retained drafts before updating.', 'info'); return; }
+    applyUpdate();
+  }, [notify]);
 
   const runCheck = useCallback(async () => {
     const found = await checkForUpdate();
@@ -148,10 +163,10 @@ export default function App() {
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
       const next = typeof patch === 'function' ? patch(prev) : { ...prev, ...patch };
-      saveSettings(next).catch(() => {});
+      saveSettings(next).catch(() => notify('Settings could not be saved. Please try again.', 'error'));
       return next;
     });
-  }, []);
+  }, [notify]);
 
   /* ---------------------------------------------------------------- import */
 
@@ -159,6 +174,7 @@ export default function App() {
     async (fileList) => {
       const files = [...(fileList || [])];
       if (!files.length) return;
+      importCount.current++;
       setImporting(true);
       try {
         const { added, duplicates, adopted, errors } = await importFiles(files);
@@ -187,8 +203,10 @@ export default function App() {
         }
         for (const error of errors) notify(`${error.name}: ${error.message}`, 'error');
         if (added.length) setTab('library');
+        return { added, duplicates, adopted, errors };
       } finally {
-        setImporting(false);
+        importCount.current--;
+        setImporting(importCount.current > 0);
       }
     },
     [notify, refreshBooks],
@@ -198,8 +216,15 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (new URL(location.href).searchParams.has('share-error')) notify('The shared book could not be saved. Please import it from Files.', 'error');
       const shared = await drainSharedFiles();
-      if (!cancelled && shared.length) await handleFiles(shared);
+      if (!cancelled && shared.length) {
+        for (const entry of shared) {
+          if (cancelled) break;
+          const result = await handleFiles([entry.file]);
+          if (result && !result.errors.length) await acknowledgeSharedFile(entry.request);
+        }
+      }
       if (new URL(location.href).searchParams.has('share-target')) {
         history.replaceState(null, '', location.pathname + location.hash);
       }
@@ -268,6 +293,8 @@ export default function App() {
       await dbDeleteBook(book.id);
       setBooks((list) => list?.filter((b) => b.id !== book.id) ?? list);
       setHighlights((list) => list.filter((h) => h.bookId !== book.id));
+      setSummaries(list => list.filter(r => r.id !== book.id));
+      scheduleSyncRef.current();
       notify(`Removed “${book.title}”`);
     },
     [notify],
@@ -281,14 +308,17 @@ export default function App() {
     setReading((current) =>
       current && current.book.id === id ? { ...current, book: { ...current.book, ...next } } : current,
     );
-    await updateBook(id, next);
-  }, []);
+    try {
+      await updateBook(id, next);
+      if (moved) scheduleSyncRef.current();
+    } catch { notify('Reading progress or book details could not be saved. Please retry.', 'error'); }
+  }, [notify]);
 
   /* ------------------------------------------------------------------ sync */
 
   const refreshAll = useCallback(
-    () => Promise.all([refreshBooks(), refreshHighlights()]),
-    [refreshBooks, refreshHighlights],
+    () => Promise.all([refreshBooks(), refreshHighlights(), refreshProjects(), refreshSummaries()]),
+    [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries],
   );
 
   const runSync = useCallback(
@@ -307,6 +337,7 @@ export default function App() {
     clearTimeout(syncTimer.current);
     syncTimer.current = setTimeout(() => runSync(), 4000);
   }, [runSync]);
+  scheduleSyncRef.current = scheduleSync;
 
   useEffect(() => {
     if (!settingsReady) return undefined;
@@ -319,9 +350,11 @@ export default function App() {
       runSync();
     };
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('online', () => runSync({ force: true }));
+    const onOnline = () => runSync({ force: true });
+    window.addEventListener('online', onOnline);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
       clearTimeout(syncTimer.current);
     };
   }, [settingsReady, runSync]);
@@ -471,10 +504,28 @@ export default function App() {
         refreshProjects(),
         refreshSummaries(),
       ]);
+      scheduleSyncRef.current();
       return report;
     },
     [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries],
   );
+
+  const repairCover = useCallback((book, replacement = null, automatic = false) => {
+    if (!book?.id || (automatic && (book.missingFile || coverAttempts.current.has(book.id)))) return;
+    if (automatic) coverAttempts.current.add(book.id);
+    const run = async () => {
+      try {
+        await repairBookCover(book, replacement);
+        await refreshBooks();
+        if (!automatic) notify('Cover updated', 'success');
+      } catch (err) {
+        if (!automatic) notify(err?.message || 'Could not repair cover', 'error');
+      }
+    };
+    coverQueue.current = coverQueue.current.then(run, run);
+    return coverQueue.current;
+  }, [refreshBooks, notify]);
+  const autoRepairCover = useCallback(book => repairCover(book, null, true), [repairCover]);
 
   const highlightCounts = useMemo(() => {
     const counts = new Map();
@@ -512,6 +563,9 @@ export default function App() {
                 onOpen={openBook}
                 onDelete={removeBook}
                 onRename={(book, title) => patchBook(book.id, { title })}
+                onRepairCover={repairCover}
+                onAutoRepairCover={autoRepairCover}
+                onReplaceCover={repairCover}
                 onOpenAbout={() => setShowAbout(true)}
                 onOpenSync={() => setShowSync(true)}
                 updateReady={update.needRefresh}
@@ -540,7 +594,7 @@ export default function App() {
           {update.needRefresh && !updateDismissed && !update.autoUpdate && (
             <UpdateBanner
               applying={update.applying}
-              onUpdate={applyUpdate}
+              onUpdate={applyUpdateSafely}
               onDismiss={() => setUpdateDismissed(true)}
             />
           )}
@@ -591,7 +645,7 @@ export default function App() {
           update={update}
           usage={usage}
           onCheck={runCheck}
-          onUpdate={applyUpdate}
+          onUpdate={applyUpdateSafely}
           onToggleAuto={setAutoUpdate}
           onClose={() => setShowAbout(false)}
         />

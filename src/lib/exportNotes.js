@@ -39,6 +39,7 @@ export function highlightsToMarkdown(groups) {
       out.push(`> ${h.text.replace(/\n+/g, '\n> ')}`);
       const tags = metaFor(entry, group);
       if (tags) out.push(`\n— ${tags}`);
+      if (h.cue) out.push(`\n**Cue:** ${h.cue}`);
       if (h.note) out.push(`\n**Note:** ${h.note}`);
       out.push('');
     }
@@ -59,6 +60,7 @@ export function highlightsToText(groups) {
       out.push(`"${h.text}"`);
       const tags = metaFor(entry, group);
       if (tags) out.push(`   ${tags}`);
+      if (h.cue) out.push(`   Cue: ${h.cue}`);
       if (h.note) out.push(`   Note: ${h.note}`);
       out.push('');
     }
@@ -162,19 +164,19 @@ export function downloadText(filename, text, mime = 'text/plain') {
 }
 
 export async function copyToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return true;
-  }
-  // Clipboard API is unavailable on insecure origins and some older WebViews.
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* try the selection-based fallback */ }
   const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  area.select();
-  const ok = document.execCommand?.('copy');
-  area.remove();
-  return !!ok;
+  const previous = document.activeElement;
+  try {
+    area.value = text; area.setAttribute('readonly', '');
+    area.style.position = 'fixed'; area.style.opacity = '0';
+    document.body.appendChild(area); area.focus(); area.select();
+    return !!document.execCommand?.('copy');
+  } catch { return false; }
+  finally { area.remove(); previous?.focus?.({ preventScroll: true }); }
 }

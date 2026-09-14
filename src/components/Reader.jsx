@@ -49,6 +49,8 @@ export default function Reader({
       if (cancelled) return;
       if (file) setBlob(file);
       else setMissing(true);
+    }).catch(() => {
+      if (!cancelled) { setMissing(true); notify('Could not read this book from storage. Close it and try again.', 'error'); }
     });
     return () => {
       cancelled = true;
@@ -87,7 +89,10 @@ export default function Reader({
     let released = false;
     const request = async () => {
       try {
-        sentinel = await navigator.wakeLock.request('screen');
+        const acquired = await navigator.wakeLock.request('screen');
+        if (released) { await acquired.release(); return; }
+        await sentinel?.release();
+        sentinel = acquired;
       } catch {
         /* denied or unsupported */
       }
@@ -182,7 +187,7 @@ export default function Reader({
           className="icon-btn"
           onClick={() => setShowToc(true)}
           aria-label="Contents"
-          disabled={!meta.toc?.length}
+          disabled={!meta.toc?.length && !highlights.length}
         >
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
             <path

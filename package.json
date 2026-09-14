@@ -10,7 +10,8 @@
     "prebuild": "node scripts/copy-pdfjs-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist public/pdfjs"
+    "clean": "rm -rf dist public/pdfjs",
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "epubjs": "^0.3.93",

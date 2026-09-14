@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import PdfPage from './PdfPage.jsx';
+import { animateScroll, createTurnQueue, shouldAnimate, swipeDirection, waitForPage } from '../lib/pageTurns.js';
 import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { closePdf, openPdf } from '../lib/pdf.js';
@@ -41,6 +42,12 @@ const PdfView = forwardRef(function PdfView(
   ref,
 ) {
   const scrollRef = useRef(null);
+  const turnsRef = useRef(null);
+  if (!turnsRef.current) turnsRef.current = createTurnQueue();
+  const turningRef = useRef(false);
+  const currentPageRef = useRef(1);
+  const paginated = settings.flow === 'paginated';
+
   const pdfRef = useRef(null);
   const dimsRef = useRef(new Map()); // page -> { width, height } at scale 1
   const highlightsRef = useRef(highlights);
@@ -140,9 +147,13 @@ const PdfView = forwardRef(function PdfView(
   const sizeOf = useCallback(
     (pageNumber) => {
       const dims = dimsRef.current.get(pageNumber) || baseSize;
-      return { width: Math.round(dims.width * scale), height: Math.round(dims.height * scale) };
+      const usableWidth = Math.max(160, viewport.width - padding * 2 - 2);
+      const pageScale = !viewport.width ? 1 : (settings.pdfFit === 'page'
+        ? Math.min(usableWidth / dims.width, Math.max(160, viewport.height - 44) / dims.height)
+        : usableWidth / dims.width) * settings.pdfZoom;
+      return { width: Math.round(dims.width * pageScale), height: Math.round(dims.height * pageScale), scale: pageScale };
     },
-    [baseSize, scale],
+    [baseSize, viewport.width, viewport.height, padding, settings.pdfFit, settings.pdfZoom],
   );
 
   const handleSized = useCallback((pageNumber, base) => {
@@ -163,15 +174,21 @@ const PdfView = forwardRef(function PdfView(
 
   const syncScroll = useCallback(() => {
     const element = scrollRef.current;
-    if (!element || !numPages) return;
+    if (!element || !numPages || turningRef.current) return;
     const middle = element.scrollTop + element.clientHeight * 0.35;
     let page = 1;
-    for (const node of pageElements()) {
-      if (node.offsetTop <= middle) page = Number(node.dataset.page);
-      else break;
+    if (settingsRef.current.flow === 'paginated') {
+      page = currentPageRef.current;
+    } else {
+      for (const node of pageElements()) {
+        if (node.offsetTop <= middle) page = Number(node.dataset.page);
+        else break;
+      }
     }
+    currentPageRef.current = page;
     setCurrentPage(page);
-    setRange({ from: Math.max(1, page - BUFFER), to: Math.min(numPages, page + BUFFER) });
+    const buffer = settingsRef.current.flow === 'paginated' ? 1 : BUFFER;
+    setRange({ from: Math.max(1, page - buffer), to: Math.min(numPages, page + buffer) });
 
     const progress = numPages > 1 ? (page - 1) / (numPages - 1) : 1;
     onMeta({ page, numPages, progress });
@@ -196,25 +213,71 @@ const PdfView = forwardRef(function PdfView(
     };
   }, [syncScroll]);
 
-  const goToPage = useCallback(
-    (pageNumber, behavior = 'auto') => {
+  const goToPage = useCallback((destination, behavior = 'auto') => {
+    if (behavior === 'auto') turnsRef.current.cancel();
+    return turnsRef.current.run(async (signal) => {
       const element = scrollRef.current;
-      if (!element) return;
-      const target = element.querySelector(`.pdf-page[data-page="${pageNumber}"]`);
-      if (target) {
-        element.scrollTo({ top: target.offsetTop - 8, behavior });
-      } else {
-        // Not mounted yet (a long jump): estimate from the known page size.
-        const { height } = sizeOf(1);
-        element.scrollTo({ top: (pageNumber - 1) * (height + 16), behavior });
+      if (!element || !numPages) return;
+      const pageNumber = Math.min(numPages, Math.max(1, typeof destination === 'function'
+        ? destination(currentPageRef.current) : destination));
+      if (settingsRef.current.flow !== 'paginated') {
+        const target = element.querySelector(`.pdf-page[data-page="${pageNumber}"]`);
+        element.scrollTo({ top: target?.offsetTop - 8 || 0, behavior:
+          window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : behavior });
+        return;
       }
-      setRange({
-        from: Math.max(1, pageNumber - BUFFER),
-        to: Math.min(numPages || pageNumber, pageNumber + BUFFER),
-      });
-    },
-    [numPages, sizeOf],
-  );
+      turningRef.current = true;
+      // Only the outgoing and destination neighborhoods need bitmaps, even
+      // for a table-of-contents jump across a large document.
+      setRange({ from: Math.max(1, pageNumber - 1), to: Math.min(numPages, pageNumber + 1) });
+      try {
+        await waitForPage(() => {
+          const page = element.querySelector(`.pdf-page[data-page="${pageNumber}"]`);
+          if (page?.dataset.renderError === 'true') throw new Error('PDF rendering failed');
+          return page?.dataset.renderScale === String(sizeOf(pageNumber).scale);
+        }, signal);
+        if (signal.aborted) return;
+        const adjacent = Math.abs(pageNumber - currentPageRef.current) === 1;
+        await animateScroll(element, 'scrollLeft', (pageNumber - 1) * element.clientWidth,
+          signal, adjacent && behavior !== 'auto' && shouldAnimate(settingsRef.current));
+        // An aborted slide has landed on its destination; preserve that page
+        // when reflowing. Cancellation during rendering leaves it untouched.
+        currentPageRef.current = pageNumber;
+        setCurrentPage(pageNumber);
+        const progress = numPages > 1 ? (pageNumber - 1) / (numPages - 1) : 1;
+        onMeta({ page: pageNumber, numPages, progress });
+        onProgress(book.id, { location: pageNumber, progress });
+      } finally {
+        turningRef.current = false;
+      }
+    }).catch((error) => {
+      if (error.name !== 'AbortError') notify('Could not render this page. Please try again.', 'error');
+    });
+  }, [numPages, sizeOf, book.id, onMeta, onProgress, notify]);
+
+  // A resize or mode change invalidates pixel destinations. Land the old turn,
+  // discard pending gestures, then restore the same logical page in the layout.
+  useEffect(() => {
+    turnsRef.current.cancel();
+    pointerRef.current = null;
+    if (restoredRef.current) {
+      const frame = requestAnimationFrame(() => goToPage(currentPageRef.current));
+      return () => { cancelAnimationFrame(frame); turnsRef.current.cancel(); };
+    }
+    return () => turnsRef.current.cancel();
+  }, [viewport.width, viewport.height, scale, settings.flow, settings.pageAnimation, goToPage]);
+
+  useEffect(() => {
+    const cancel = () => { turnsRef.current.cancel(); pointerRef.current = null; };
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    media.addEventListener('change', cancel);
+    window.addEventListener('orientationchange', cancel);
+    return () => {
+      cancel();
+      media.removeEventListener('change', cancel);
+      window.removeEventListener('orientationchange', cancel);
+    };
+  }, []);
 
   // Restore the saved page once the first layout is in place.
   useEffect(() => {
@@ -222,9 +285,10 @@ const PdfView = forwardRef(function PdfView(
     restoredRef.current = true;
     const saved = Number(book.location);
     const target = Number.isFinite(saved) && saved >= 1 ? Math.min(saved, numPages) : 1;
+    currentPageRef.current = target;
     setCurrentPage(target);
     setRange({ from: Math.max(1, target - BUFFER), to: Math.min(numPages, target + BUFFER) });
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       goToPage(target);
       onMeta({
         page: target,
@@ -232,6 +296,7 @@ const PdfView = forwardRef(function PdfView(
         progress: numPages > 1 ? (target - 1) / (numPages - 1) : 1,
       });
     });
+    return () => cancelAnimationFrame(frame);
   }, [status, viewport.width, numPages, book.location, goToPage, onMeta]);
 
   /* ------------------------------------------------------------- selection */
@@ -338,6 +403,14 @@ const PdfView = forwardRef(function PdfView(
       const start = pointerRef.current;
       pointerRef.current = null;
 
+      if (!start || start.pointerId !== event.pointerId) return;
+      const swipe = swipeDirection(start, event);
+      if (swipe && settingsRef.current.flow === 'paginated' && settingsRef.current.pdfZoom <= 1 &&
+          !window.getSelection()?.toString().trim()) {
+        closeMenu();
+        goToPage((page) => page + (swipe === 'next' ? 1 : -1), 'smooth');
+        return;
+      }
       const selected = readSelection();
       if (selected) {
         setMenu({ mode: 'create', ...selected });
@@ -359,9 +432,13 @@ const PdfView = forwardRef(function PdfView(
         closeMenu();
         return;
       }
-      onToggleChrome();
+      const box = scrollRef.current.getBoundingClientRect();
+      const fraction = (event.clientX - box.left) / box.width;
+      if (settingsRef.current.flow === 'paginated' && (fraction < 0.2 || fraction > 0.8)) {
+        goToPage((page) => page + (fraction < 0.2 ? -1 : 1), 'smooth');
+      } else onToggleChrome();
     },
-    [readSelection, highlightAt, tapHighlight, menu, closeMenu, onToggleChrome],
+    [goToPage, readSelection, highlightAt, tapHighlight, menu, closeMenu, onToggleChrome],
   );
 
   // Escape closes the toolbar rather than the book: capture the key before the
@@ -383,11 +460,11 @@ const PdfView = forwardRef(function PdfView(
       if (event.target?.closest?.('input, textarea')) return;
       if (event.key === 'ArrowRight' || event.key === 'PageDown') {
         event.preventDefault();
-        goToPage(Math.min(numPages, currentPage + 1), 'smooth');
+        goToPage((page) => page + 1, 'smooth');
       }
       if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
         event.preventDefault();
-        goToPage(Math.max(1, currentPage - 1), 'smooth');
+        goToPage((page) => page - 1, 'smooth');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -472,7 +549,9 @@ const PdfView = forwardRef(function PdfView(
       // Two fingers scroll the document while the highlighter has the surface.
       onPan: ({ phase, stepY }) => {
         if (phase !== 'move') return;
-        const scroller = scrollRef.current;
+        const root = scrollRef.current;
+        const scroller = settingsRef.current.flow === 'paginated'
+          ? root?.children[currentPageRef.current - 1] : root;
         if (scroller) scroller.scrollTop -= stepY;
       },
       onMiss: (reason) =>
@@ -512,6 +591,7 @@ const PdfView = forwardRef(function PdfView(
     (id) => {
       const highlight = highlightsRef.current.find((h) => h.id === id);
       if (!highlight) return;
+      turnsRef.current.cancel();
       goToPage(highlight.page, 'smooth');
     },
     [goToPage],
@@ -529,11 +609,12 @@ const PdfView = forwardRef(function PdfView(
   useImperativeHandle(
     ref,
     () => ({
-      next: () => goToPage(Math.min(numPages, currentPage + 1), 'smooth'),
-      prev: () => goToPage(Math.max(1, currentPage - 1), 'smooth'),
+      next: () => goToPage((page) => page + 1, 'smooth'),
+      prev: () => goToPage((page) => page - 1, 'smooth'),
       goTo: (target) => {
+        turnsRef.current.cancel();
         const page = Number(target);
-        if (Number.isFinite(page)) goToPage(Math.min(Math.max(1, page), numPages), 'smooth');
+        if (Number.isFinite(page)) return goToPage(Math.min(Math.max(1, page), numPages), 'smooth');
       },
       goToHighlight: focusHighlight,
     }),
@@ -563,15 +644,22 @@ const PdfView = forwardRef(function PdfView(
         ref={scrollRef}
         className={[
           'pdf-scroll',
-          settings.flow === 'paginated' ? 'is-snapping' : '',
+          paginated ? 'pdf-horizontal' : '',
+          settings.pdfZoom > 1 ? 'is-zoomed' : '',
           highlighterOn ? 'is-highlighting' : '',
         ]
           .filter(Boolean)
           .join(' ')}
-        style={{ padding: `12px ${padding}px 32px` }}
+        style={paginated ? undefined : { padding: `12px ${padding}px 32px` }}
         onPointerDown={(event) => {
-          pointerRef.current = { x: event.clientX, y: event.clientY };
+          if (!event.isPrimary || event.button !== 0 || highlighterRef.current) {
+            pointerRef.current = null;
+            return;
+          }
+          pointerRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
         }}
+        onPointerCancel={() => { pointerRef.current = null; }}
+        onLostPointerCapture={() => { pointerRef.current = null; }}
         onPointerUp={onPointerUp}
       >
         {status === 'loading' && <div className="view-status">Opening book…</div>}
@@ -579,21 +667,26 @@ const PdfView = forwardRef(function PdfView(
 
         {pdf &&
           Array.from({ length: numPages }, (_, index) => index + 1).map((pageNumber) => {
-            const { width, height } = sizeOf(pageNumber);
-            return (
+            const { width, height, scale: pageScale } = sizeOf(pageNumber);
+            const page = (
               <PdfPage
                 key={pageNumber}
                 pdf={pdf}
                 pageNumber={pageNumber}
-                scale={scale}
+                scale={pageScale}
                 width={width}
                 height={height}
-                active={pageNumber >= range.from && pageNumber <= range.to}
+                active={(pageNumber >= range.from && pageNumber <= range.to) || (paginated && pageNumber === currentPage)}
                 invert={invert}
                 highlights={[...(byPage.get(pageNumber) || [])]}
                 onSized={handleSized}
               />
             );
+            return paginated ? (
+              <div key={pageNumber} className="pdf-page-slot" inert={pageNumber !== currentPage} style={{ padding: `12px ${padding}px 32px` }}>
+                {page}
+              </div>
+            ) : page;
           })}
       </div>
 

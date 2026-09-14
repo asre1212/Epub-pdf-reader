@@ -7,6 +7,7 @@ import { colorHex } from '../lib/highlightColors.js';
  * painted underneath the text so selection keeps working.
  */
 function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, onSized, invert }) {
+  const pageRef = useRef(null);
   const canvasRef = useRef(null);
   const textRef = useRef(null);
   const taskRef = useRef(null);
@@ -14,6 +15,9 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
 
   useEffect(() => {
     let cancelled = false;
+    let textLayer;
+    const node = pageRef.current;
+    delete node.dataset.renderError;
 
     if (!active) {
       // Drop the bitmap for pages that scrolled away; a long PDF otherwise
@@ -21,6 +25,7 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
       taskRef.current?.cancel();
       taskRef.current = null;
       renderedRef.current = null;
+      delete node.dataset.renderScale;
       const canvas = canvasRef.current;
       if (canvas) {
         canvas.width = 0;
@@ -31,6 +36,7 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
     }
 
     if (renderedRef.current === scale) return undefined;
+    delete node.dataset.renderScale;
 
     (async () => {
       try {
@@ -42,7 +48,10 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
 
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        // Keep each bitmap below four million pixels even on Retina phones
+        // and at high zoom. CSS/text geometry retains the requested scale.
+        const dpr = Math.min(window.devicePixelRatio || 1, 2,
+          Math.sqrt(4_000_000 / (viewport.width * viewport.height)));
         canvas.width = Math.floor(viewport.width * dpr);
         canvas.height = Math.floor(viewport.height * dpr);
         canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -62,25 +71,33 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
         await taskRef.current.promise;
         taskRef.current = null;
         if (cancelled) return;
-        renderedRef.current = scale;
+
 
         const layer = textRef.current;
         if (layer) {
           layer.replaceChildren();
-          const textLayer = new TextLayer({
+          textLayer = new TextLayer({
             textContentSource: page.streamTextContent({ includeMarkedContent: true }),
             container: layer,
             viewport,
           });
           await textLayer.render();
         }
+        if (!cancelled) {
+          renderedRef.current = scale;
+          node.dataset.renderScale = String(scale);
+        }
       } catch (err) {
-        if (err?.name !== 'RenderingCancelledException') console.warn('Page render failed', err);
+        if (!cancelled && err?.name !== 'RenderingCancelledException') {
+          node.dataset.renderError = 'true';
+          console.warn('Page render failed', err);
+        }
       }
     })();
 
     return () => {
       cancelled = true;
+      textLayer?.cancel();
       taskRef.current?.cancel();
       taskRef.current = null;
     };
@@ -88,6 +105,7 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
 
   return (
     <div
+      ref={pageRef}
       className={invert ? 'pdf-page is-inverted' : 'pdf-page'}
       data-page={pageNumber}
       style={{ width: `${width}px`, height: `${height}px`, '--scale-factor': scale }}

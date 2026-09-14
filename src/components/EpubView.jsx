@@ -1,5 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import ePub, { EpubCFI } from 'epubjs';
+import AnimatedEpubManager from '../lib/AnimatedEpubManager.js';
+import { createTurnQueue, shouldAnimate, swipeDirection } from '../lib/pageTurns.js';
 import SelectionMenu from './SelectionMenu.jsx';
 import NoteDialog from './NoteDialog.jsx';
 import { colorHex } from '../lib/highlightColors.js';
@@ -32,8 +34,6 @@ const ERASE_EDGE = 44;
 // How far two fingers must travel before it counts as a page turn rather than a
 // hand resting on the screen.
 const PAN_TURN = 40;
-const TURN_MS = 280;
-const TURN_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
 function flatten(items, depth = 0, out = []) {
   for (const item of items || []) {
@@ -86,98 +86,6 @@ function themeRules(settings) {
     '::selection': { background: 'rgba(120, 160, 255, 0.35)' },
     [`.${HIGHLIGHT_CLASS}`]: { cursor: 'pointer' },
   };
-}
-
-/**
- * Slides the rendered page across after epub.js has already turned it.
- *
- * epub.js pages a chapter by scrolling its container over one very wide iframe,
- * so a turn is instant. Replaying it is a matter of putting the content back
- * where it came from and letting it travel: the element that moves is the view
- * *inside* the clip, which is a plain translation of what is already painted.
- *
- * The earlier version animated the whole stage and faded it to nothing at the
- * midpoint, which is where it broke — WebKit will not keep compositing an iframe
- * under an animating opacity, so on iOS the page blinked out and back rather
- * than turning. Nothing fades here, and if a browser refuses to animate the
- * transform it simply arrives, which is the behaviour with animation off.
- */
-function slidePages(container, shift, ms) {
-  const views = [...container.children];
-  if (!views.length || !shift) return Promise.resolve();
-
-  for (const view of views) {
-    view.style.willChange = 'transform';
-    view.style.transition = 'none';
-    view.style.transform = `translate3d(${shift}px, 0, 0)`;
-  }
-  // Commit the starting offset before the transition is armed.
-  void container.offsetHeight;
-
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => {
-      for (const view of views) {
-        view.style.transition = `transform ${ms}ms ${TURN_EASE}`;
-        view.style.transform = 'translate3d(0, 0, 0)';
-      }
-      setTimeout(resolve, ms + 20);
-    });
-  });
-}
-
-/**
- * Slides the page by scrolling, which is how epub.js moves it anyway.
- *
- * The transform version below animates an element that contains the book's
- * iframe, and WebKit is famously reluctant to keep compositing an iframe under
- * an animating ancestor. Scrolling has no such problem here for the plainest of
- * reasons: an instant scroll is exactly what a page turn already is, so the new
- * position demonstrably paints. This just walks there instead of jumping.
- *
- * epub.js reports the reading position from its `scrolled` event, which it
- * debounces 20ms past the last movement — so it fires once, after this has
- * finished, at the position that is actually correct.
- */
-function slideScroll(container, from, to, ms, isCurrent, onStop) {
-  return new Promise((resolve) => {
-    if (from === to) {
-      resolve();
-      return;
-    }
-    let done = false;
-    const settle = () => {
-      if (done) return;
-      done = true;
-      container.scrollLeft = to;
-      onStop?.(null);
-      resolve();
-    };
-    onStop?.(settle);
-
-    const startedAt = performance.now();
-    container.scrollLeft = from;
-    const step = (now) => {
-      if (done) return;
-      if (!isCurrent() || !container.isConnected) {
-        settle();
-        return;
-      }
-      const t = Math.min(1, (now - startedAt) / ms);
-      const eased = 1 - (1 - t) ** 3;
-      container.scrollLeft = from + (to - from) * eased;
-      if (t < 1) requestAnimationFrame(step);
-      else settle();
-    };
-    requestAnimationFrame(step);
-  });
-}
-
-function clearSlide(container) {
-  for (const view of container?.children || []) {
-    view.style.transition = '';
-    view.style.transform = '';
-    view.style.willChange = '';
-  }
 }
 
 /** Maps a Range inside an epub.js iframe to viewport coordinates. */
@@ -237,11 +145,11 @@ const EpubView = forwardRef(function EpubView(
   // say whether anything in there is heard at all.
   const witnessRef = useRef({ click: 0, touchstart: 0, touchend: 0 });
   const witnessedDocs = useRef(new WeakSet());
-  // Bumped on every turn so an animation still running can tell it was replaced.
-  const turnRef = useRef(0);
-  // Lands an in-flight scroll slide immediately, so the next turn starts from a
-  // position that is settled rather than halfway.
-  const slideStopRef = useRef(null);
+  const turnsRef = useRef(null);
+  if (!turnsRef.current) turnsRef.current = createTurnQueue();
+  const turningRef = useRef(false);
+  const edgeGestureRef = useRef(null);
+  const lastSwipeRef = useRef(0);
   const [preview, setPreview] = useState(null);
 
   const [markBoxes, setMarkBoxes] = useState([]);
@@ -356,7 +264,7 @@ const EpubView = forwardRef(function EpubView(
   const measureMarks = useCallback(() => {
     const host = hostRef.current;
     const zone = eraseZone();
-    if (!host || !zone) {
+    if (!host || !zone || turningRef.current) {
       setMarkBoxes([]);
       return;
     }
@@ -513,72 +421,50 @@ const EpubView = forwardRef(function EpubView(
     [book.id, chapterFor, onMeta, onProgress],
   );
 
-  /**
-   * Turns the page, then replays the turn as a slide.
-   *
-   * The turn itself happens first and unconditionally, so a tap is never held
-   * up by the animation and rapid turns cannot fall behind. What follows is
-   * cosmetic: the page that just arrived is put back where it came from and
-   * released. A turn that crosses into a new chapter has no scroll distance to
-   * measure, so it borrows one page width and slides in from the same side.
-   */
-  const turnPage = useCallback(
-    async (direction) => {
-      const rendition = renditionRef.current;
-      if (!rendition) return;
-      const container = hostRef.current?.querySelector('.epub-container');
-      const token = ++turnRef.current;
-      closeMenu();
-      // A turn arriving mid-slide takes over: land the old one first, so what
-      // this one reads as the current position is the settled one.
-      slideStopRef.current?.();
-      slideStopRef.current = null;
-      if (container) clearSlide(container);
+  const cancelTurns = useCallback(() => {
+    turnsRef.current.cancel();
+    const rendition = renditionRef.current;
+    if (turningRef.current && rendition?.manager?.views?.length) {
+      const location = rendition.located(rendition.manager.currentLocation());
+      rendition.location = location;
+      reportLocation(location);
+    }
+    touchRef.current = null;
+    edgeGestureRef.current = null;
+  }, [reportLocation]);
 
-      const go = () => (direction === 'next' ? rendition.next() : rendition.prev());
-      const animate =
-        settingsRef.current.pageAnimation !== false &&
-        settingsRef.current.flow === 'paginated' &&
-        !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-
-      if (!animate || !container) {
-        await go().catch(() => {});
-        return;
+  const turnPage = useCallback((direction) => turnsRef.current.run(async (signal) => {
+    const rendition = renditionRef.current;
+    if (!rendition) return;
+    closeMenu();
+    turningRef.current = true;
+    setMarkBoxes([]);
+    try {
+      if (settingsRef.current.flow === 'paginated' && rendition.manager?.turn) {
+        await rendition.manager.turn(direction, signal, shouldAnimate(settingsRef.current));
+      } else {
+        await (direction === 'next' ? rendition.next() : rendition.prev());
       }
-
-      const fromView = container.firstElementChild;
-      const fromScroll = container.scrollLeft;
-      await go().catch(() => {});
-      if (token !== turnRef.current || !container.isConnected) return;
-
-      const sectionChanged = container.firstElementChild !== fromView;
-      const scrolled = sectionChanged ? 0 : container.scrollLeft - fromScroll;
-      const pageWidth = rendition.manager?.layout?.delta || container.offsetWidth;
-      // Nothing moved and nothing loaded: the book has no page that way.
-      if (!scrolled && !sectionChanged) return;
-      // Inside a chapter the turn is a scroll, so it can be replayed as one.
-      // Crossing into a new chapter is not — there is nothing behind the new
-      // page to scroll away from — so that one still travels by transform.
-      if (!sectionChanged && scrolled) {
-        await slideScroll(
-          container,
-          fromScroll,
-          fromScroll + scrolled,
-          TURN_MS,
-          () => token === turnRef.current,
-          (stop) => {
-            slideStopRef.current = stop;
-          },
-        );
-        return;
+    } finally {
+      turningRef.current = false;
+      if (renditionRef.current === rendition && !signal.aborted) {
+        // Read the settled manager position synchronously before another queued
+        // turn can begin. rendition.currentLocation() can still contain the old CFI.
+        const location = rendition.located(rendition.manager.currentLocation());
+        rendition.location = location;
+        reportLocation(location);
+        measureMarks();
       }
+    }
+  }).catch((error) => {
+    if (error.name !== 'AbortError') notify('Could not turn the page. Please try again.', 'error');
+  }), [closeMenu, reportLocation, measureMarks, notify]);
 
-      const shift = scrolled || (direction === 'next' ? pageWidth : -pageWidth);
-      await slidePages(container, shift, TURN_MS);
-      if (token === turnRef.current && container.isConnected) clearSlide(container);
-    },
-    [closeMenu],
-  );
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    media.addEventListener('change', cancelTurns);
+    return () => media.removeEventListener('change', cancelTurns);
+  }, [cancelTurns]);
 
   const handleTap = useCallback(
     (clientX) => {
@@ -599,6 +485,7 @@ const EpubView = forwardRef(function EpubView(
   const flashHighlight = useCallback((id) => {
     const highlight = highlightsRef.current.find((h) => h.id === id);
     if (!highlight || !renditionRef.current) return;
+    cancelTurns();
     renditionRef.current.display(highlight.cfi).catch(() => {});
   }, []);
 
@@ -861,12 +748,18 @@ const EpubView = forwardRef(function EpubView(
           width: '100%',
           height: '100%',
           flow: scrolled ? 'scrolled' : 'paginated',
-          manager: scrolled ? 'continuous' : 'default',
+          manager: scrolled ? 'continuous' : AnimatedEpubManager,
           spread: 'none',
           snap: false,
           allowScriptedContent: false,
         });
         renditionRef.current = rendition;
+        rendition.hooks.content.register((contents) => {
+          if (!scrolled) {
+            contents.document.documentElement.style.touchAction = 'pan-y pinch-zoom';
+            contents.document.body.style.touchAction = 'pan-y pinch-zoom';
+          }
+        });
 
         rendition.themes.register('marginalia', themeRules(settingsRef.current));
         rendition.themes.select('marginalia');
@@ -876,6 +769,7 @@ const EpubView = forwardRef(function EpubView(
         onMeta({ toc: tocRef.current });
 
         rendition.on('relocated', (location) => {
+          if (turningRef.current) return;
           closeMenu();
           reportLocation(location);
           setLayoutTick((tick) => tick + 1);
@@ -920,7 +814,9 @@ const EpubView = forwardRef(function EpubView(
           });
         });
 
+        rendition.on('touchcancel', () => { touchRef.current = null; });
         rendition.on('touchstart', (event) => {
+          if (event.touches.length !== 1) { touchRef.current = null; return; }
           const touch = event.changedTouches?.[0];
           touchRef.current = touch ? { x: touch.clientX, y: touch.clientY, t: Date.now() } : null;
         });
@@ -939,11 +835,14 @@ const EpubView = forwardRef(function EpubView(
           const dy = touch.clientY - start.y;
           if (Math.abs(dx) > SWIPE_MIN && Math.abs(dx) > Math.abs(dy) * 1.4) {
             if (contentsHasSelection(event)) return;
+            lastSwipeRef.current = Date.now();
             turnPage(dx < 0 ? 'next' : 'prev');
           }
         });
 
         rendition.on('click', (event, contents) => {
+          if (Date.now() - lastSwipeRef.current < 500) return;
+          if (event.target?.closest?.('a, button, input')) return;
           // Taps belong to the highlighter in highlighter mode; it turns the
           // page itself, and letting this fire too turned two at a time.
           if (highlighterRef.current) return;
@@ -1018,6 +917,7 @@ const EpubView = forwardRef(function EpubView(
 
     return () => {
       cancelled = true;
+      cancelTurns();
       drawnRef.current.clear();
       try {
         rendition?.destroy();
@@ -1040,6 +940,7 @@ const EpubView = forwardRef(function EpubView(
   useEffect(() => {
     const rendition = renditionRef.current;
     if (!rendition || status !== 'ready') return undefined;
+    cancelTurns();
     rendition.themes.register('marginalia', themeRules(settings));
     rendition.themes.select('marginalia');
     rendition.themes.fontSize(`${settings.fontSize}%`);
@@ -1091,6 +992,7 @@ const EpubView = forwardRef(function EpubView(
 
   useEffect(() => {
     const onResize = () => {
+      cancelTurns();
       closeMenu();
       paintHighlights(true);
       setLayoutTick((tick) => tick + 1);
@@ -1253,7 +1155,7 @@ const EpubView = forwardRef(function EpubView(
       anyHeard
         ? `click ${heard.click}, touchstart ${heard.touchstart}, touchend ${heard.touchend}`
         : 'none since this book opened — if you have tapped the page, nothing in the frame is ' +
-          'heard, and tapping to turn a page cannot work either. Tap the middle of the page a ' +
+          'heard. The separate edge buttons still turn pages. Tap the middle of the page a ' +
           'few times, then run this again.',
     );
 
@@ -1278,13 +1180,13 @@ const EpubView = forwardRef(function EpubView(
         const before = container.scrollLeft;
         const seen = new Set();
         const sample = setInterval(() => {
-          seen.add(window.getComputedStyle(view).transform || 'none');
+          seen.add(Math.round(container.scrollLeft));
         }, 25);
         await turnPage('next');
         clearInterval(sample);
         const turned = container.scrollLeft !== before;
         add('a page actually turned', turned, `scroll ${before} → ${container.scrollLeft}`);
-        const frames = [...seen].filter((value) => value && value !== 'none');
+        const frames = [...seen];
         add(
           'the slide was animated',
           frames.length > 1,
@@ -1293,7 +1195,7 @@ const EpubView = forwardRef(function EpubView(
             : 'the page arrived without moving through anything',
         );
         // Put the reader back where they were.
-        await turnPage('prev');
+        if (turned) await turnPage('prev');
       }
     }
     return steps;
@@ -1304,7 +1206,7 @@ const EpubView = forwardRef(function EpubView(
     () => ({
       next: () => turnPage('next'),
       prev: () => turnPage('prev'),
-      goTo: (target) => renditionRef.current?.display(target).catch(() => {}),
+      goTo: (target) => { cancelTurns(); return renditionRef.current?.display(target).catch(() => {}); },
       goToHighlight: flashHighlight,
       selfTest,
     }),
@@ -1351,6 +1253,36 @@ const EpubView = forwardRef(function EpubView(
       }}
     >
       <div ref={hostRef} className="epub-host" />
+      {!highlighterOn && settings.flow === 'paginated' && ['prev', 'next'].map((direction) => (
+        <button
+          key={direction}
+          className={`epub-turn-edge epub-turn-edge-${direction}`}
+          aria-label={direction === 'next' ? 'Next EPUB page' : 'Previous EPUB page'}
+          onPointerDown={(event) => {
+            if (!event.isPrimary) { edgeGestureRef.current = null; lastSwipeRef.current = Date.now(); return; }
+            edgeGestureRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerCancel={() => { edgeGestureRef.current = null; lastSwipeRef.current = Date.now(); }}
+          onLostPointerCapture={() => {
+            if (edgeGestureRef.current) lastSwipeRef.current = Date.now();
+            edgeGestureRef.current = null;
+          }}
+          onPointerUp={(event) => {
+            const start = edgeGestureRef.current;
+            edgeGestureRef.current = null;
+            const swipe = swipeDirection(start, event);
+            if (start && (Math.abs(event.clientX - start.x) > 6 || Math.abs(event.clientY - start.y) > 6)) {
+              lastSwipeRef.current = Date.now();
+              if (swipe) turnPage(swipe);
+            }
+          }}
+          onClick={() => {
+            if (Date.now() - lastSwipeRef.current >= 500) turnPage(direction);
+          }}
+        />
+      ))}
+
 
       {/*
         Transparent, and above everything, only while the highlighter is on. It

@@ -2602,3 +2602,43 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Horizontal pagination uses a viewport-sized slot for each PDF. Each slot
+   scrolls independently, so a tall or zoomed page remains fully accessible. */
+.pdf-scroll.pdf-horizontal {
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  scroll-behavior: auto;
+  overflow-anchor: none;
+}
+.pdf-page-slot {
+  flex: 0 0 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: auto;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior: contain;
+}
+.pdf-page-slot .pdf-page { margin-inline: auto; }
+.pdf-horizontal.is-zoomed .pdf-page-slot { touch-action: pan-x pan-y pinch-zoom; }
+.pdf-horizontal.is-highlighting .pdf-page-slot { touch-action: none; }
+
+/* Dedicated edge controls live outside the EPUB iframe. The middle remains
+   available for text selection, links, and editing highlights. */
+.epub-turn-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20%;
+  z-index: 36;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  touch-action: pan-y pinch-zoom;
+  -webkit-tap-highlight-color: transparent;
+}
+.epub-turn-edge-prev { left: 0; }
+.epub-turn-edge-next { right: 0; }
+.epub-turn-edge:focus-visible { outline: 2px solid var(--ink-muted); outline-offset: -3px; }

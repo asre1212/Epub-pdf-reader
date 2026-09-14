@@ -78,3 +78,20 @@ pull.
 npm run db:init:local
 npx wrangler dev
 ```
+
+## Reliability update (protocol 2)
+
+Deploy this worker before updating clients. No database migration is required.
+The worker continues to accept /v1/sync; new clients use /v2/sync with
+`since: { "seq": 12, "id": "hl:..." }`. Replies include `protocol: 2` and the
+same composite cursor shape. Clients replay their first pull after upgrading,
+then drain all pages and batch pushes below the existing limits.
+
+Projects (`pj:`) and study summaries (`sm:`) are supported. Counter allocation
+and record writes share one D1 batch transaction. Legacy scalar pulls include
+the complete boundary sequence; v2 pages use the record ID as a tiebreaker.
+
+Forgetting server data preserves the sequence counter. The initiating client
+also disables sync; other connected devices must be disconnected separately
+or they can upload their local changes again. Deletion markers on clients are
+retained to prevent a long-offline device resurrecting removed notes.

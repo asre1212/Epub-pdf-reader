@@ -144,14 +144,14 @@ export default function SyncSheet({ notify, onSynced, onClose }) {
   };
 
   const wipe = async () => {
-    if (!window.confirm('Delete everything this code has stored on the server? Your devices keep their own copies.')) {
+    if (!window.confirm('Delete the server copy and disconnect this device? Local books and notes stay here. Disconnect your other devices too, or they can upload changes again.')) {
       return;
     }
     setBusy('wipe');
     try {
       const result = await forgetOnServer();
       await reload();
-      notify(result.ok ? 'Server copy deleted.' : result.error || 'Could not reach the server.', result.ok ? 'success' : 'error');
+      notify(result.ok ? 'Server copy deleted; this device disconnected.' : result.error || 'Could not reach the server.', result.ok ? 'success' : 'error');
     } finally {
       setBusy(null);
     }

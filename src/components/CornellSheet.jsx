@@ -62,6 +62,7 @@ export default function CornellSheet({
                 <div className="cornell-cue">
                   <GrowingField
                     className="cornell-cue-input"
+                    draftKey={`highlight:${highlight.id}:cue`}
                     value={highlight.cue}
                     placeholder="Keyword or question…"
                     ariaLabel="Cue for this passage"
@@ -83,6 +84,7 @@ export default function CornellSheet({
                   </button>
                   <GrowingField
                     className="cornell-note-input"
+                    draftKey={`highlight:${highlight.id}:note`}
                     value={highlight.note}
                     placeholder="What you made of it…"
                     ariaLabel="Note on this passage"
@@ -99,6 +101,7 @@ export default function CornellSheet({
             <GrowingField
               className="cornell-summary-input"
               rows={2}
+              draftKey={`summary:${book.id}:chapter:${section.key}`}
               value={section.summary}
               placeholder="In your own words, what does this section say?"
               ariaLabel={`Summary of ${section.title || 'this section'}`}
@@ -113,6 +116,7 @@ export default function CornellSheet({
         <GrowingField
           className="cornell-summary-input"
           rows={4}
+          draftKey={`summary:${book.id}:book`}
           value={summary}
           placeholder="The whole book in a few sentences. Write this last."
           ariaLabel="Summary of the book"

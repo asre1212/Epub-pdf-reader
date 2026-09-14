@@ -1,3 +1,4 @@
+import { useDraft } from '../lib/useDraft.js';
 import { useEffect, useRef, useState } from 'react';
 import { HIGHLIGHT_COLORS, colorHex } from '../lib/highlightColors.js';
 
@@ -19,22 +20,16 @@ export default function HighlightCard({
   onCopy,
 }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(highlight.note || '');
+  const { draft, setDraft, commit, discard, error, saving } = useDraft(`highlight:${highlight.id}:note`, highlight.note, onChangeNote);
   const textarea = useRef(null);
+  useEffect(() => { if (draft !== (highlight.note || '')) setEditing(true); }, []);
 
-  useEffect(() => {
-    setDraft(highlight.note || '');
-  }, [highlight.note]);
 
   useEffect(() => {
     if (editing) textarea.current?.focus();
   }, [editing]);
 
-  const saveNote = () => {
-    setEditing(false);
-    const next = draft.trim();
-    if (next !== (highlight.note || '')) onChangeNote(next);
-  };
+  const saveNote = async () => { if (await commit()) setEditing(false); };
 
   return (
     <li className="note" style={{ '--note-color': colorHex(highlight.color) }}>
@@ -58,21 +53,22 @@ export default function HighlightCard({
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
-                setDraft(highlight.note || '');
+                discard();
                 setEditing(false);
               }
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveNote();
             }}
           />
+          {error && <p role="alert">{error}</p>}
           <div className="note-editor-actions">
-            <button type="button" className="btn btn-small" onClick={saveNote}>
+            <button type="button" className="btn btn-small" disabled={saving} onClick={saveNote}>
               Save
             </button>
             <button
               type="button"
               className="btn btn-small btn-ghost"
               onClick={() => {
-                setDraft(highlight.note || '');
+                discard();
                 setEditing(false);
               }}
             >
@@ -92,7 +88,7 @@ export default function HighlightCard({
             <span className="visually-hidden">Project</span>
             <select
               className="field field-select field-small"
-              value={project?.id || ''}
+              value={highlight.projectId || ''}
               onChange={(e) => onChangeProject(e.target.value || null)}
             >
               <option value="">Unfiled</option>

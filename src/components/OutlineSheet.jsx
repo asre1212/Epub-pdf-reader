@@ -89,7 +89,8 @@ export default function OutlineSheet({ doc, onOpenHighlight, onChangeText, onCha
                       <GrowingField
                         className="outline-text-input"
                         rows={1}
-                        value={highlight.text}
+                        draftKey={`highlight:${highlight.id}:text`}
+                    value={highlight.text}
                         ariaLabel="Passage"
                         onCommit={(text) => text && onChangeText(highlight.id, text)}
                       />
@@ -109,7 +110,8 @@ export default function OutlineSheet({ doc, onOpenHighlight, onChangeText, onCha
                       <GrowingField
                         className="outline-cue-input"
                         rows={1}
-                        value={highlight.cue}
+                        draftKey={`highlight:${highlight.id}:cue`}
+                    value={highlight.cue}
                         placeholder="Keyword or question…"
                         ariaLabel="Cue"
                         onCommit={(cue) => onChangeCue(highlight.id, cue)}
@@ -123,7 +125,8 @@ export default function OutlineSheet({ doc, onOpenHighlight, onChangeText, onCha
                         <GrowingField
                           className="outline-note-input"
                           rows={1}
-                          value={highlight.note}
+                          draftKey={`highlight:${highlight.id}:note`}
+                    value={highlight.note}
                           placeholder="Your note…"
                           ariaLabel="Note"
                           onCommit={(note) => onChangeNote(highlight.id, note)}

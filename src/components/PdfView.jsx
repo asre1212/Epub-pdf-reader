@@ -749,10 +749,12 @@ const PdfView = forwardRef(function PdfView(
 
       {noteFor && (
         <NoteDialog
+          key={noteFor.id}
+          draftKey={`highlight:${noteFor.id}:note`}
           quote={noteFor.text}
           note={noteFor.note}
-          onSave={(note) => {
-            onUpdateHighlight(noteFor.id, { note });
+          onSave={async (note) => {
+            await onUpdateHighlight(noteFor.id, { note });
             setNoteFor(null);
           }}
           onClose={() => setNoteFor(null)}

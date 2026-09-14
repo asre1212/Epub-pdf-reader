@@ -1,51 +1,26 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import { useDraft } from '../lib/useDraft.js';
 
-/**
- * A textarea that grows to its content, committing on blur.
- *
- * Study documents are read as documents, so an inner scrollbar in the middle of
- * one is wrong: the field takes the height of what is in it and the page scrolls
- * as a whole. Committing on blur rather than on every keystroke keeps the write
- * to one per edit, which is also the right unit for sync to resolve.
- */
-export default function GrowingField({
-  value,
-  onCommit,
-  placeholder,
-  className,
-  rows = 2,
-  ariaLabel,
-}) {
-  const [draft, setDraft] = useState(value || '');
+/** A recoverable draft, committed on blur with an explicit retry on failure. */
+export default function GrowingField({ draftKey, value, onCommit, placeholder, className, rows = 2, ariaLabel }) {
+  const { draft, setDraft, commit, discard, error, saving } = useDraft(draftKey, value, onCommit);
   const ref = useRef(null);
-
-  useEffect(() => setDraft(value || ''), [value]);
-
+  const cancelled = useRef(false);
   useEffect(() => {
     const node = ref.current;
-    if (!node) return;
-    node.style.height = 'auto';
-    node.style.height = `${node.scrollHeight}px`;
+    if (node) { node.style.height = 'auto'; node.style.height = node.scrollHeight + 'px'; }
   }, [draft]);
-
   return (
-    <textarea
-      ref={ref}
-      className={className}
-      rows={rows}
-      value={draft}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        if ((draft || '') !== (value || '')) onCommit(draft.trim());
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          setDraft(value || '');
-          e.currentTarget.blur();
-        }
-      }}
-    />
+    <>
+      <textarea ref={ref} className={className} rows={rows} value={draft}
+        placeholder={placeholder} aria-label={ariaLabel} aria-busy={saving}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { if (!cancelled.current) void commit(); cancelled.current = false; }}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { cancelled.current = true; discard(); e.currentTarget.blur(); }
+        }}
+      />
+      {error && <span role="alert">{error} <button type="button" onClick={commit}>Retry save</button></span>}
+    </>
   );
 }

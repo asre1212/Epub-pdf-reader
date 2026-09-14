@@ -473,10 +473,16 @@ export async function mergeRemoteRecord(record, value) {
 export async function saveImportedBook(book, blob) {
   const db = await getDB();
   const tx = db.transaction(['books', 'files'], 'readwrite');
-  await tx.objectStore('files').put({ id: book.id, blob });
-  await tx.objectStore('books').put(book);
-  await tx.done;
-  return book;
+  try {
+    await tx.objectStore('files').put({ id: book.id, blob });
+    await tx.objectStore('books').put(book);
+    await tx.done;
+    return book;
+  } catch (error) {
+    try { tx.abort(); } catch { /* already aborted */ }
+    await tx.done.catch(() => {});
+    throw error;
+  }
 }
 
 export async function requestPersistentStorage() {

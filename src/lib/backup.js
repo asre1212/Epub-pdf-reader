@@ -149,7 +149,7 @@ function validateBackupRecords(data) {
         (h.format === 'pdf' && (!Number.isInteger(h.page) || h.page < 1)) ||
         (h.format === 'epub' && !string(h.cfi)) ||
         ['note', 'cue', 'projectId', 'chapter'].some(k => h[k] != null && !string(h[k])) ||
-        (h.rects != null && !Array.isArray(h.rects))) fail();
+        (h.rects != null && (!Array.isArray(h.rects) || h.rects.some(r => !object(r) || !['x', 'y', 'w', 'h', 'p'].every(k => Number.isFinite(r[k])))))) fail();
   }
 }
 

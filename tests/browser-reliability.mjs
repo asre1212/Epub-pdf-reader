@@ -1,4 +1,4 @@
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,7 +12,7 @@ try {
     await delay(500);
   }
   assert.ok(ready, 'Vite starts');
-  browser = await chromium.launch({ headless: true });
+  browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -51,7 +51,22 @@ try {
       const file = new File([await response.blob()], 'book.' + format);
       const result = await importFile(file);
       if (!(await db.hasBookFile(result.book.id))) throw new Error('Imported file missing');
-      if (!result.book.cover) throw new Error('Fixture cover missing: ' + format);
+      if (format === 'pdf' && !result.book.cover) throw new Error('PDF fixture cover missing');
+      if (format === 'pdf') await db.putHighlight({ id: 'pdf-drawer', bookId: result.book.id, format: 'pdf', page: 1, text: 'Drawer test quote', rects: [], createdAt: Date.now() });
+    }
+    const { default: JSZip } = await import('/node_modules/.vite/deps/jszip.js');
+    const { extractEpubCover } = await import('/src/lib/covers.js');
+    const canvas = document.createElement('canvas'); canvas.width = 20; canvas.height = 30;
+    canvas.getContext('2d').fillRect(0, 0, 20, 30);
+    const png = await new Promise(resolve => canvas.toBlob(resolve));
+    for (const version of [2, 3]) {
+      const zip = new JSZip();
+      zip.file('META-INF/container.xml', '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>');
+      zip.file('OEBPS/book.opf', '<package><metadata>' + (version === 2 ? '<meta name="cover" content="jacket"/>' : '') +
+        '</metadata><manifest><item id="jacket" href="Images/front.png" media-type="image/png"' +
+        (version === 3 ? ' properties="cover-image"' : '') + '/></manifest></package>');
+      zip.file('OEBPS/Images/front.png', await png.arrayBuffer());
+      if (!(await extractEpubCover(await zip.generateAsync({ type: 'blob' })))) throw new Error('EPUB cover extraction failed: ' + version);
     }
     return true;
   });
@@ -81,6 +96,22 @@ try {
   await page.evaluate(() => window.showCover());
   await page.getByText('Fallback title').waitFor();
   console.log('PASS: invalid cover image displays title fallback');
+
+  await page.goto('http://127.0.0.1:4173/');
+  await page.locator('.card-open').filter({ has: page.locator('.chip-pdf') }).first().click();
+  await page.locator('.pdf-page[data-render-scale]').first().waitFor();
+  assert.ok(await page.getByRole('button', { name: 'Contents', exact: true }).isEnabled());
+  await page.getByRole('button', { name: 'Contents', exact: true }).click();
+  await page.getByRole('tab', { name: /Highlights/ }).click();
+  await page.getByText('Drawer test quote').click();
+  await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await page.getByRole('button', { name: 'Previous page', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to library', exact: true }).click();
+  await page.locator('.card-open').filter({ has: page.locator('.chip-epub') }).filter({ hasNotText: 'NOTES ONLY' }).last().click();
+  await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => f.contentDocument?.body?.textContent?.trim()));
+  await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await page.getByRole('button', { name: 'Previous page', exact: true }).click();
+  console.log('PASS: app mounts, PDF renders, highlights drawer opens, EPUB renders, reader navigation responds');
   assert.deepEqual(errors, [], 'No uncaught browser errors');
 } finally {
   await browser?.close();

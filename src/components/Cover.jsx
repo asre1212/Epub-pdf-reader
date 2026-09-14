@@ -8,7 +8,7 @@ export default function Cover({ book, className = '', onInvalid }) {
 
   useEffect(() => {
     setFailed(false);
-    if (!book?.cover) {
+    if (!(book?.cover instanceof Blob)) {
       setUrl(null);
       return undefined;
     }

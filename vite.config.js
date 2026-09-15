@@ -27,10 +27,9 @@ export default defineConfig({
           'pdfjs/standard_fonts/*.{pfb,ttf}',
           'pdfjs/wasm/*.wasm',
           'pdfjs/iccs/*.icc',
+          'pdfjs/cmaps/*.bcmap',
         ],
         globIgnores: [
-          // Only used when WebAssembly is unavailable; cached at runtime instead.
-          '**/pdfjs/wasm/*_nowasm_fallback.js',
           '**/pdfjs/**/LICENSE*',
         ],
       },

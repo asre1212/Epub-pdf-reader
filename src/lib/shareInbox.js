@@ -19,9 +19,14 @@ export async function drainSharedFiles() {
     if (response) {
       const name = decodeURIComponent(response.headers.get('x-filename') || 'shared-book');
       const type = response.headers.get('content-type') || '';
-      files.push(new File([await response.blob()], name, { type }));
+      files.push({ file: new File([await response.blob()], name, { type }), request });
     }
-    await cache.delete(request);
   }
   return files;
+}
+
+/** Remove an inbox item only after the original file and metadata have committed. */
+export async function acknowledgeSharedFile(request) {
+  const cache = await caches.open(SHARE_CACHE);
+  await cache.delete(request);
 }

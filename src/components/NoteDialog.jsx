@@ -1,8 +1,11 @@
+import { useDraft } from '../lib/useDraft.js';
 import { useEffect, useRef, useState } from 'react';
 
 /** Modal for writing or editing the note attached to a highlight. */
-export default function NoteDialog({ quote, note, onSave, onClose }) {
-  const [draft, setDraft] = useState(note || '');
+export default function NoteDialog({ draftKey, quote, note, onSave, onClose }) {
+  const { draft, setDraft, commit, discard, error, saving } = useDraft(draftKey, note, onSave);
+  const close = () => { discard(); onClose(); };
+  const closeRef = useRef(close); closeRef.current = close;
   const textarea = useRef(null);
 
   useEffect(() => {
@@ -11,11 +14,11 @@ export default function NoteDialog({ quote, note, onSave, onClose }) {
       if (e.key !== 'Escape') return;
       // Captured so the reader's Escape handler does not close the book too.
       e.stopPropagation();
-      onClose();
+      closeRef.current();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="sheet-backdrop" onPointerDown={onClose}>
@@ -36,14 +39,15 @@ export default function NoteDialog({ quote, note, onSave, onClose }) {
           placeholder="What do you want to remember about this?"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSave(draft.trim());
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) commit();
           }}
         />
+        {error && <p role="alert">{error}</p>}
         <div className="sheet-actions">
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
+          <button type="button" className="btn btn-ghost" onClick={close}>
             Cancel
           </button>
-          <button type="button" className="btn btn-primary" onClick={() => onSave(draft.trim())}>
+          <button type="button" className="btn btn-primary" disabled={saving} onClick={() => commit()}>
             Save note
           </button>
         </div>

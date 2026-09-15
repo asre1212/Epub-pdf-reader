@@ -91,7 +91,7 @@ export default function Notes({
       }
       if (
         needle &&
-        !`${h.text} ${h.note || ''} ${book.title} ${book.author || ''} ${project?.name || ''}`
+        !`${h.text} ${h.cue || ''} ${h.note || ''} ${book.title} ${book.author || ''} ${project?.name || ''}`
           .toLowerCase()
           .includes(needle)
       ) {
@@ -172,11 +172,11 @@ export default function Notes({
     [groups],
   );
   const booksWithHighlights = useMemo(() => {
-    const ids = new Set(highlights.map((h) => h.bookId));
+    const ids = new Set([...highlights.map((h) => h.bookId), ...summaries.map(s => s.id)]);
     return books
       .filter((b) => ids.has(b.id))
       .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-  }, [books, highlights]);
+  }, [books, highlights, summaries]);
 
   const changeGroupBy = (next) => {
     setGroupBy(next);
@@ -270,6 +270,9 @@ export default function Notes({
       byKey.get(key).entries.push({ highlight, book: studyBook });
     }
 
+    for (const [key, summary] of Object.entries(record?.chapters || {})) {
+      if (!byKey.has(key)) sections.push({ key, title: key, entries: [], summary });
+    }
     return { book: studyBook, sections, total: mine.length, summary: record?.summary || '' };
   }, [studyBook, highlights, summariesById]);
 
@@ -288,7 +291,7 @@ export default function Notes({
         <div className="screen-head-row">
           <h1>Notes</h1>
           <div className="head-actions">
-            {shown > 0 && (
+            {(shown > 0 || studyDoc) && (
               <button type="button" className="btn" onClick={copyAll}>
                 Copy
               </button>
@@ -302,7 +305,7 @@ export default function Notes({
           </div>
         </div>
 
-        {highlights.length > 0 && (
+        {(highlights.length > 0 || summaries.length > 0) && (
           <>
             <div className="view-switch" role="group" aria-label="How notes are shown">
               <button
@@ -452,7 +455,7 @@ export default function Notes({
         )}
       </header>
 
-      {highlights.length === 0 && (
+      {highlights.length === 0 && summaries.length === 0 && (
         <div className="empty">
           <h2>No highlights yet</h2>
           <p>
@@ -471,6 +474,7 @@ export default function Notes({
 
       {view === 'cornell' && studyDoc && (
         <CornellSheet
+          key={studyDoc.book.id}
           doc={studyDoc}
           onOpenHighlight={(highlight) => onOpenHighlight(studyDoc.book, highlight)}
           onChangeCue={(id, cue) => onEditHighlight(id, { cue })}
@@ -484,6 +488,7 @@ export default function Notes({
 
       {view === 'outline' && studyDoc && (
         <OutlineSheet
+          key={studyDoc.book.id}
           doc={studyDoc}
           onOpenHighlight={(highlight) => onOpenHighlight(studyDoc.book, highlight)}
           onChangeText={(id, text) => onEditHighlight(id, { text })}
@@ -629,6 +634,8 @@ export default function Notes({
 
       {showExport && (
         <NotesExportSheet
+          studyDoc={view === 'list' ? null : studyDoc}
+          studyView={view}
           groups={groups}
           shown={shown}
           total={highlights.length}

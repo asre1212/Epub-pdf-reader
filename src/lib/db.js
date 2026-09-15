@@ -65,22 +65,53 @@ export function newId() {
 
 /* ------------------------------------------------------------------ books */
 
+// Covers are small byte buffers. This avoids WebKit's temporary-file Blob
+// storage failure, while readBook still accepts existing libraries of Blobs.
+async function storedCover(record) {
+  if (!Object.hasOwn(record, 'cover')) return record;
+  const { cover, ...rest } = record;
+  return {
+    ...rest,
+    cover: null,
+    coverData: cover instanceof Blob ? await cover.arrayBuffer() : null,
+    coverType: cover instanceof Blob ? cover.type : '',
+  };
+}
+
+function readBook(record) {
+  if (!record) return record;
+  const { coverData, coverType, ...book } = record;
+  if (coverData) book.cover = new Blob([coverData], { type: coverType || 'image/jpeg' });
+  return book;
+}
+
+let needsFileBytes = false;
+function blobStorageError(error) {
+  return error?.name === 'UnknownError' && /blob|file/i.test(error.message || '');
+}
+
+async function fileRecord(id, blob, bytes = needsFileBytes) {
+  return bytes ? { id, bytes: await blob.arrayBuffer(), type: blob.type } : { id, blob };
+}
+
 export async function listBooks() {
   const db = await getDB();
   const books = await db.getAll('books');
-  return books.sort((a, b) => (b.lastOpenedAt || b.addedAt) - (a.lastOpenedAt || a.addedAt));
+  return books.map(readBook).sort((a, b) => (b.lastOpenedAt || b.addedAt) - (a.lastOpenedAt || a.addedAt));
 }
 
 export async function getBook(id) {
-  return (await getDB()).get('books', id);
+  return readBook(await (await getDB()).get('books', id));
 }
 
 export async function putBook(book) {
-  await (await getDB()).put('books', book);
+  const stored = await storedCover(book);
+  await (await getDB()).put('books', stored);
   return book;
 }
 
 export async function updateBook(id, patch) {
+  const storedPatch = await storedCover(patch);
   const db = await getDB();
   const tx = db.transaction('books', 'readwrite');
   const existing = await tx.store.get(id);
@@ -88,19 +119,25 @@ export async function updateBook(id, patch) {
     await tx.done;
     return null;
   }
-  const next = { ...existing, ...patch };
+  const next = { ...existing, ...storedPatch };
   await tx.store.put(next);
   await tx.done;
-  return next;
+  return readBook(next);
 }
 
 export async function saveBookFile(id, blob) {
-  await (await getDB()).put('files', { id, blob });
+  const db = await getDB();
+  try { await db.put('files', await fileRecord(id, blob)); }
+  catch (error) {
+    if (!blobStorageError(error)) throw error;
+    needsFileBytes = true;
+    await db.put('files', await fileRecord(id, blob, true));
+  }
 }
 
 export async function getBookFile(id) {
   const rec = await (await getDB()).get('files', id);
-  return rec?.blob ?? null;
+  return rec?.bytes ? new Blob([rec.bytes], { type: rec.type || '' }) : rec?.blob ?? null;
 }
 
 /**
@@ -119,6 +156,8 @@ export async function deleteBook(id) {
     ['books', 'files', 'highlights', 'summaries', 'tombstones'],
     'readwrite',
   );
+  const book = await tx.objectStore('books').get(id);
+  if (book?.fingerprint) tx.objectStore('tombstones').put({ id: book.fingerprint, kind: 'summary', deletedAt: Date.now() });
   tx.objectStore('books').delete(id);
   tx.objectStore('files').delete(id);
   tx.objectStore('summaries').delete(id);
@@ -136,7 +175,7 @@ export async function deleteBook(id) {
 export async function findBookByFingerprint(fingerprint) {
   if (!fingerprint) return null;
   const books = await (await getDB()).getAll('books');
-  return books.find((b) => b.fingerprint === fingerprint) || null;
+  return readBook(books.find((b) => b.fingerprint === fingerprint)) || null;
 }
 
 /* -------------------------------------------------------------- highlights */
@@ -368,4 +407,136 @@ export async function estimateUsage() {
   } catch {
     return null;
   }
+}
+
+/** Restore is all-or-nothing, including deletion markers. Only IDB awaits belong in this callback. */
+export async function withRestoreTransaction(restore) {
+  const db = await getDB();
+  const tx = db.transaction(['books', 'highlights', 'projects', 'summaries', 'tombstones'], 'readwrite');
+  const now = Date.now();
+  const put = (store, record) => tx.objectStore(store).put(record).then(() => record);
+  try {
+    const result = await restore({
+      listBooks: () => tx.objectStore('books').getAll(),
+      listHighlights: () => tx.objectStore('highlights').getAll(),
+      listProjects: () => tx.objectStore('projects').getAll(),
+      getSummary: id => tx.objectStore('summaries').get(id),
+      putBook: record => put('books', record),
+      putSummary: record => put('summaries', { ...record, updatedAt: now }),
+      putProject: async record => {
+        await tx.objectStore('tombstones').delete(record.id);
+        return put('projects', { ...record, updatedAt: now });
+      },
+      putHighlight: async record => {
+        await tx.objectStore('tombstones').delete(record.id);
+        return put('highlights', { ...record, updatedAt: now });
+      },
+    });
+    await tx.done;
+    return result;
+  } catch (error) {
+    try { tx.abort(); } catch { /* already aborted */ }
+    await tx.done.catch(() => {});
+    throw error;
+  }
+}
+
+/** Compare and apply remote changes inside one transaction, including local deletion markers. */
+export async function mergeRemoteRecord(record, value) {
+  const db = await getDB();
+  const tx = db.transaction(['books', 'highlights', 'projects', 'summaries', 'tombstones'], 'readwrite');
+  try {
+    const [prefix, ...rest] = record.id.split(':');
+    const id = rest.join(':');
+    const stores = { hl: 'highlights', pj: 'projects', sm: 'summaries', pos: 'books' };
+    const store = stores[prefix];
+    if (!store || !Number.isFinite(record.clientAt)) throw new Error('Invalid sync record.');
+    const graves = tx.objectStore('tombstones');
+    const grave = await graves.get(id);
+    if (grave && grave.deletedAt >= record.clientAt) { await tx.done; return 0; }
+    let book;
+    if (prefix === 'pos' || prefix === 'sm' || prefix === 'hl') {
+      const fingerprint = prefix === 'hl' ? value?.fingerprint : id;
+      if (fingerprint) book = (await tx.objectStore('books').getAll()).find(b => b.fingerprint === fingerprint);
+    }
+    const target = tx.objectStore(store);
+    const localId = prefix === 'pos' || prefix === 'sm' ? book?.id : id;
+    const local = localId ? await target.get(localId) : null;
+    const localAt = prefix === 'pos' ? local?.positionAt || 0 : local?.updatedAt || local?.createdAt || 0;
+    if (localAt > record.clientAt || (!record.deleted && localAt === record.clientAt)) {
+      await tx.done; return 0;
+    }
+    if (record.deleted) {
+      if (localId) await target.delete(localId);
+      await graves.put({ id, kind: prefix === 'pj' ? 'project' : prefix === 'sm' ? 'summary' : 'highlight', deletedAt: record.clientAt });
+      if (prefix === 'pj') {
+        for (const h of await tx.objectStore('highlights').getAll()) {
+          if (h.projectId === id && (h.updatedAt || h.createdAt || 0) <= record.clientAt) {
+            await tx.objectStore('highlights').put({ ...h, projectId: null, updatedAt: record.clientAt });
+          }
+        }
+      }
+    } else {
+      const expected = { hl: 'highlight', pj: 'project', sm: 'summary', pos: 'position' }[prefix];
+      if (value?.kind !== expected ||
+          (prefix === 'hl' && value.highlight?.id !== id) ||
+          (prefix === 'pj' && value.project?.id !== id) ||
+          ((prefix === 'pos' || prefix === 'sm') && value.fingerprint !== id)) {
+        throw new Error('Sync record identity does not match its content.');
+      }
+      if (prefix !== 'pj' && !book) {
+        const metadata = value.book || value;
+        book = { id: newId(), fingerprint: value.fingerprint, title: metadata.title || 'Untitled',
+          author: metadata.author || '', format: metadata.format || 'epub', cover: null,
+          fileName: '', addedAt: Date.now(), location: null, progress: 0, missingFile: true, restoredFromSync: true };
+        await tx.objectStore('books').put(book);
+      }
+      if (prefix === 'hl') await target.put({ ...value.highlight, id, bookId: book.id, updatedAt: record.clientAt });
+      if (prefix === 'pj') await target.put({ ...value.project, id, updatedAt: record.clientAt });
+      if (prefix === 'sm') await target.put({ ...value.summary, id: book.id, updatedAt: record.clientAt });
+      if (prefix === 'pos') await target.put({ ...book, location: value.location, progress: value.progress, positionAt: record.clientAt });
+      if (grave) await graves.delete(id);
+    }
+    await tx.done;
+    return 1;
+  } catch (error) {
+    try { tx.abort(); } catch { /* already complete */ }
+    await tx.done.catch(() => {});
+    throw error;
+  }
+}
+
+/** Commit metadata and bytes together, so a failed import cannot leave half a book. */
+export async function saveImportedBook(book, blob) {
+  const db = await getDB();
+  const stored = await storedCover(book);
+  async function commit(file) {
+    const tx = db.transaction(['books', 'files'], 'readwrite');
+    // Handle the transaction rejection immediately as well as the request.
+    tx.done.catch(() => {});
+    try {
+      await tx.objectStore('files').put(file);
+      await tx.objectStore('books').put(stored);
+      await tx.done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already aborted */ }
+      await tx.done.catch(() => {});
+      throw error;
+    }
+  }
+  try {
+    await commit(await fileRecord(book.id, blob));
+  } catch (error) {
+    if (!blobStorageError(error)) throw error;
+    needsFileBytes = true;
+    await commit(await fileRecord(book.id, blob, true));
+  }
+  return book;
+}
+
+export async function requestPersistentStorage() {
+  try {
+    if (await navigator.storage?.persisted?.()) return true;
+    return !!(await navigator.storage?.persist?.());
+  } catch { return false; }
 }

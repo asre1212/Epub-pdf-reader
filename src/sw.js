@@ -50,6 +50,7 @@ self.addEventListener('fetch', (event) => {
         }
       } catch (err) {
         console.warn('Share target failed', err);
+        return Response.redirect(new URL('./?share-error=1', self.registration.scope).href, 303);
       }
       return Response.redirect(new URL('./?share-target=1', self.registration.scope).href, 303);
     })(),
@@ -70,8 +71,7 @@ precacheAndRoute(self.__WB_MANIFEST);
 // from the app shell while offline.
 registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html')));
 
-// CMaps (CJK books) and the non-wasm decoder fallbacks are too large to precache
-// for everyone, so they are kept the first time a PDF actually asks for them.
+// Current PDF assets are precached; retain a runtime fallback for older cached app versions.
 registerRoute(
   ({ url }) => url.origin === self.location.origin && url.pathname.includes('/pdfjs/'),
   new CacheFirst({ cacheName: 'pdfjs-runtime-assets' }),

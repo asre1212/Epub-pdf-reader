@@ -1,3 +1,4 @@
+import { hasUnsavedDrafts } from './useDraft.js';
 import { registerSW } from 'virtual:pwa-register';
 import { getPref, setPref } from './db.js';
 
@@ -185,7 +186,7 @@ export async function checkForUpdate({ silent = false } = {}) {
 let reloaded = false;
 
 function reloadOnce() {
-  if (reloaded) return;
+  if (reloaded || hasUnsavedDrafts()) return;
   reloaded = true;
   window.location.reload();
 }
@@ -200,14 +201,14 @@ function reloadOnce() {
  * activates without ever taking control.
  */
 export function applyUpdate() {
-  if (state.applying) return;
+  if (state.applying || hasUnsavedDrafts()) return;
   if (!state.needRefresh && !registration?.waiting) return;
 
   emit({ applying: true });
   navigator.serviceWorker?.addEventListener('controllerchange', reloadOnce, { once: true });
   setTimeout(reloadOnce, APPLY_TIMEOUT);
 
-  if (updateSW) updateSW(true);
+  if (updateSW) updateSW(false);
   else registration?.waiting?.postMessage({ type: 'SKIP_WAITING' });
 }
 

@@ -114,7 +114,7 @@ function PdfPage({ pdf, pageNumber, scale, width, height, active, highlights, on
 
       <div className="pdf-marks" aria-hidden="true">
         {highlights.map((highlight) =>
-          highlight.rects
+          (highlight.rects || [])
             .filter((rect) => rect.p === pageNumber)
             .map((rect, index) => (
               <span

@@ -1,3 +1,4 @@
+import { extractEpubCover, normalizeCover } from './covers.js';
 import ePub from 'epubjs';
 import {
   findBookByFingerprint,
@@ -5,7 +6,8 @@ import {
   listBooks,
   newId,
   putBook,
-  saveBookFile,
+  saveImportedBook,
+  getBookFile,
   updateBook,
 } from './db.js';
 import { fingerprintBlob } from './fingerprint.js';
@@ -30,9 +32,9 @@ function titleFromFilename(name = '') {
 }
 
 /** Renders the first page of a PDF to a small cover image. */
-async function pdfCover(pdf) {
+async function pdfCover(pdf, pageNumber = 1) {
   try {
-    const page = await pdf.getPage(1);
+    const page = await pdf.getPage(pageNumber);
     const base = page.getViewport({ scale: 1 });
     const scale = Math.min(600 / base.width, 900 / base.height, 2);
     const viewport = page.getViewport({ scale });
@@ -43,7 +45,12 @@ async function pdfCover(pdf) {
     canvasContext.fillStyle = '#ffffff';
     canvasContext.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext, viewport }).promise;
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.75));
+    const pixels = canvasContext.getImageData(0, 0, canvas.width, canvas.height).data;
+    let ink = 0, samples = 0;
+    for (let i = 0; i < pixels.length; i += 64) {
+      samples++; if (Math.min(pixels[i], pixels[i + 1], pixels[i + 2]) < 235) ink++;
+    }
+    const blob = ink / samples < 0.002 ? null : await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.75));
     page.cleanup();
     return blob;
   } catch {
@@ -59,7 +66,11 @@ async function readPdfMetadata(blob, file) {
   } catch {
     /* metadata is optional */
   }
-  const cover = await pdfCover(pdf);
+  let cover = null;
+  for (let page = 1; page <= Math.min(pdf.numPages, 5); page++) {
+    const candidate = await pdfCover(pdf, page);
+    if (candidate) { cover = candidate; break; }
+  }
   const meta = {
     title: (info.Title || '').trim() || titleFromFilename(file.name),
     author: (info.Author || '').trim() || '',
@@ -85,7 +96,8 @@ async function readEpubMetadata(blob, file) {
     const url = await book.coverUrl();
     if (url) {
       try {
-        meta.cover = await (await fetch(url)).blob();
+        const response = await fetch(url);
+        if (response.ok) meta.cover = await normalizeCover(await response.blob());
       } finally {
         URL.revokeObjectURL(url);
       }
@@ -95,6 +107,7 @@ async function readEpubMetadata(blob, file) {
   } finally {
     book.destroy();
   }
+  if (!meta.cover) meta.cover = await extractEpubCover(blob).catch(() => null);
   return meta;
 }
 
@@ -138,6 +151,10 @@ export async function importFile(file) {
   const fingerprint = await fingerprintBlob(blob);
   const existing = await findBookByFingerprint(fingerprint);
   if (existing && (await hasBookFile(existing.id))) {
+    if (!existing.cover || !(await normalizeCover(existing.cover))) {
+      const repaired = await repairBookCover(existing).catch(() => existing);
+      return { book: repaired, duplicate: true };
+    }
     return { book: existing, duplicate: true };
   }
 
@@ -146,17 +163,16 @@ export async function importFile(file) {
 
   const placeholder = existing || (await findPlaceholder({ ...meta, fingerprint, format }));
   if (placeholder) {
-    await saveBookFile(placeholder.id, blob);
-    const book = await updateBook(placeholder.id, {
+    const book = await saveImportedBook({ ...placeholder,
       fingerprint: fingerprint || placeholder.fingerprint || null,
       size: blob.size,
       fileName: file.name || placeholder.fileName,
-      cover: placeholder.cover || meta.cover || null,
+      cover: (await normalizeCover(placeholder.cover)) || meta.cover || null,
       pageCount: placeholder.pageCount ?? meta.pageCount ?? null,
       title: placeholder.title || meta.title,
       author: placeholder.author || meta.author || '',
       missingFile: false,
-    });
+    }, blob);
     return { book: book || placeholder, duplicate: false, adopted: true };
   }
 
@@ -180,8 +196,7 @@ export async function importFile(file) {
     locations: null, // cached epub.js locations, generated on first read
   };
 
-  await saveBookFile(book.id, blob);
-  await putBook(book);
+  await saveImportedBook(book, blob);
   return { book, duplicate: false };
 }
 
@@ -202,4 +217,29 @@ export async function importFiles(files) {
     }
   }
   return { added, duplicates, adopted, errors };
+}
+
+let importQueue = Promise.resolve();
+export function importFilesSerial(files) {
+  const next = importQueue.then(() => importFiles(files));
+  importQueue = next.catch(() => {});
+  return next;
+}
+
+export async function repairBookCover(book, replacement = null) {
+  let cover;
+  if (replacement) cover = await normalizeCover(replacement);
+  else {
+    const blob = await getBookFile(book.id);
+    if (!blob) throw new Error('Import the original book file to repair its cover.');
+    if (book.format === 'epub') cover = await extractEpubCover(blob);
+    else {
+      const pdf = await openPdf(blob);
+      try {
+        for (let page = 1; page <= Math.min(pdf.numPages, 5) && !cover; page++) cover = await pdfCover(pdf, page);
+      } finally { await closePdf(pdf); }
+    }
+  }
+  if (!cover) throw new Error('No usable cover found. Choose a cover image instead.');
+  return updateBook(book.id, { cover });
 }

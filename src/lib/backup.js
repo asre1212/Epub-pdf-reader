@@ -4,11 +4,7 @@ import {
   listHighlights,
   listProjects,
   listSummaries,
-  putSummary,
-  getSummary,
-  putBook,
-  putHighlight,
-  putProject,
+  withRestoreTransaction,
   newId,
 } from './db.js';
 
@@ -50,10 +46,10 @@ export async function buildBackup(highlights) {
     listSummaries(),
   ]);
   const chosen = highlights || allHighlights;
-  const usedBookIds = new Set(chosen.map((h) => h.bookId));
+  const usedBookIds = new Set(highlights ? chosen.map((h) => h.bookId) : allBooks.map((b) => b.id));
   // Only the projects these highlights are actually filed under: a backup of
   // one book's notes should not carry the reader's whole filing system.
-  const usedProjectIds = new Set(chosen.map((h) => h.projectId).filter(Boolean));
+  const usedProjectIds = new Set(highlights ? chosen.map((h) => h.projectId).filter(Boolean) : allProjects.map((p) => p.id));
 
   return {
     format: BACKUP_FORMAT,
@@ -102,10 +98,11 @@ function matchBook(backupBook, library) {
     if (byFingerprint) return byFingerprint;
   }
   const byId = library.find((b) => b.id === backupBook.id);
-  if (byId) return byId;
+  if (byId && !(backupBook.fingerprint && byId.fingerprint && backupBook.fingerprint !== byId.fingerprint)) return byId;
   return (
     library.find(
       (b) =>
+        !(backupBook.fingerprint && b.fingerprint && backupBook.fingerprint !== b.fingerprint) &&
         normalise(b.title) === normalise(backupBook.title) &&
         normalise(b.author) === normalise(backupBook.author) &&
         b.format === backupBook.format,
@@ -120,8 +117,40 @@ function matchBook(backupBook, library) {
  * highlighted on two different pages.
  */
 function highlightKey(highlight) {
-  const locator = highlight.format === 'pdf' ? `p${highlight.page}` : `c${highlight.cfi || ''}`;
+  const locator = highlight.format === 'pdf' ? `p${highlight.page}:${JSON.stringify(highlight.rects || [])}` : `c${highlight.cfi || ''}`;
   return `${highlight.bookId}|${locator}|${normalise(highlight.text)}`;
+}
+
+
+function validateBackupRecords(data) {
+  const fail = () => { throw new Error('The backup contains invalid records. Nothing was imported.'); };
+  const object = (x) => x && typeof x === 'object' && !Array.isArray(x);
+  const string = (x) => typeof x === 'string';
+  for (const key of ['books', 'projects', 'summaries']) {
+    if (data[key] != null && !Array.isArray(data[key])) fail();
+  }
+  const seen = new Set();
+  for (const b of data.books || []) {
+    if (!object(b) || !string(b.id) || !b.id || !string(b.title) ||
+        !['epub', 'pdf'].includes(b.format) || (b.author != null && !string(b.author)) ||
+        (b.fingerprint != null && !string(b.fingerprint)) || seen.has(b.id)) fail();
+    seen.add(b.id);
+  }
+  for (const p of data.projects || []) {
+    if (!object(p) || !string(p.id) || !p.id || !string(p.name)) fail();
+  }
+  for (const s of data.summaries || []) {
+    if (!object(s) || !string(s.id) || (s.summary != null && !string(s.summary)) ||
+        (s.chapters != null && (!object(s.chapters) || Object.values(s.chapters).some(v => !string(v))))) fail();
+  }
+  for (const h of data.highlights) {
+    if (!object(h) || !string(h.bookId) || !string(h.text) ||
+        (h.id != null && !string(h.id)) || !['epub', 'pdf'].includes(h.format) ||
+        (h.format === 'pdf' && (!Number.isInteger(h.page) || h.page < 1)) ||
+        (h.format === 'epub' && !string(h.cfi)) ||
+        ['note', 'cue', 'projectId', 'chapter'].some(k => h[k] != null && !string(h[k])) ||
+        (h.rects != null && (!Array.isArray(h.rects) || h.rects.some(r => !object(r) || !['x', 'y', 'w', 'h', 'p'].every(k => Number.isFinite(r[k])))))) fail();
+  }
 }
 
 export function parseBackup(text) {
@@ -137,6 +166,7 @@ export function parseBackup(text) {
   if (Number(data.version) > BACKUP_VERSION) {
     throw new Error('That backup was made by a newer version of the app.');
   }
+  validateBackupRecords(data);
   return data;
 }
 
@@ -148,6 +178,7 @@ export function parseBackup(text) {
 export async function restoreBackup(file) {
   const data = parseBackup(await file.text());
 
+  return withRestoreTransaction(async ({ listBooks, listHighlights, listProjects, getSummary, putBook, putHighlight, putProject, putSummary }) => {
   const library = await listBooks();
   const existing = await listHighlights();
 
@@ -165,7 +196,7 @@ export async function restoreBackup(file) {
     // missing, and importing it later reattaches it to these same highlights.
     const placeholder = {
       ...backupBook,
-      id: backupBook.id || newId(),
+      id: library.some(b => b.id === backupBook.id) ? newId() : backupBook.id || newId(),
       cover: null,
       locations: null,
       addedAt: backupBook.addedAt || Date.now(),
@@ -211,8 +242,11 @@ export async function restoreBackup(file) {
     const book = target.get(record.id);
     if (!book) continue;
     const local = await getSummary(book.id);
-    if (local?.summary || Object.keys(local?.chapters || {}).length) continue;
-    await putSummary({ ...record, id: book.id });
+    const chapters = { ...(record.chapters || {}), ...(local?.chapters || {}) };
+    for (const [key, value] of Object.entries(record.chapters || {})) {
+      if (!local?.chapters?.[key]) chapters[key] = value;
+    }
+    await putSummary({ ...record, ...local, id: book.id, chapters, summary: local?.summary || record.summary || '' });
     sheets += 1;
   }
 
@@ -267,4 +301,5 @@ export async function restoreBackup(file) {
     placeholders: placeholders.map((b) => b.title),
     exportedAt: data.exportedAt || null,
   };
+  });
 }

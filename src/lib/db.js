@@ -65,22 +65,53 @@ export function newId() {
 
 /* ------------------------------------------------------------------ books */
 
+// Covers are small byte buffers. This avoids WebKit's temporary-file Blob
+// storage failure, while readBook still accepts existing libraries of Blobs.
+async function storedCover(record) {
+  if (!Object.hasOwn(record, 'cover')) return record;
+  const { cover, ...rest } = record;
+  return {
+    ...rest,
+    cover: null,
+    coverData: cover instanceof Blob ? await cover.arrayBuffer() : null,
+    coverType: cover instanceof Blob ? cover.type : '',
+  };
+}
+
+function readBook(record) {
+  if (!record) return record;
+  const { coverData, coverType, ...book } = record;
+  if (coverData) book.cover = new Blob([coverData], { type: coverType || 'image/jpeg' });
+  return book;
+}
+
+let needsFileBytes = false;
+function blobStorageError(error) {
+  return error?.name === 'UnknownError' && /blob|file/i.test(error.message || '');
+}
+
+async function fileRecord(id, blob, bytes = needsFileBytes) {
+  return bytes ? { id, bytes: await blob.arrayBuffer(), type: blob.type } : { id, blob };
+}
+
 export async function listBooks() {
   const db = await getDB();
   const books = await db.getAll('books');
-  return books.sort((a, b) => (b.lastOpenedAt || b.addedAt) - (a.lastOpenedAt || a.addedAt));
+  return books.map(readBook).sort((a, b) => (b.lastOpenedAt || b.addedAt) - (a.lastOpenedAt || a.addedAt));
 }
 
 export async function getBook(id) {
-  return (await getDB()).get('books', id);
+  return readBook(await (await getDB()).get('books', id));
 }
 
 export async function putBook(book) {
-  await (await getDB()).put('books', book);
+  const stored = await storedCover(book);
+  await (await getDB()).put('books', stored);
   return book;
 }
 
 export async function updateBook(id, patch) {
+  const storedPatch = await storedCover(patch);
   const db = await getDB();
   const tx = db.transaction('books', 'readwrite');
   const existing = await tx.store.get(id);
@@ -88,19 +119,25 @@ export async function updateBook(id, patch) {
     await tx.done;
     return null;
   }
-  const next = { ...existing, ...patch };
+  const next = { ...existing, ...storedPatch };
   await tx.store.put(next);
   await tx.done;
-  return next;
+  return readBook(next);
 }
 
 export async function saveBookFile(id, blob) {
-  await (await getDB()).put('files', { id, blob });
+  const db = await getDB();
+  try { await db.put('files', await fileRecord(id, blob)); }
+  catch (error) {
+    if (!blobStorageError(error)) throw error;
+    needsFileBytes = true;
+    await db.put('files', await fileRecord(id, blob, true));
+  }
 }
 
 export async function getBookFile(id) {
   const rec = await (await getDB()).get('files', id);
-  return rec?.blob ?? null;
+  return rec?.bytes ? new Blob([rec.bytes], { type: rec.type || '' }) : rec?.blob ?? null;
 }
 
 /**
@@ -138,7 +175,7 @@ export async function deleteBook(id) {
 export async function findBookByFingerprint(fingerprint) {
   if (!fingerprint) return null;
   const books = await (await getDB()).getAll('books');
-  return books.find((b) => b.fingerprint === fingerprint) || null;
+  return readBook(books.find((b) => b.fingerprint === fingerprint)) || null;
 }
 
 /* -------------------------------------------------------------- highlights */
@@ -472,17 +509,29 @@ export async function mergeRemoteRecord(record, value) {
 /** Commit metadata and bytes together, so a failed import cannot leave half a book. */
 export async function saveImportedBook(book, blob) {
   const db = await getDB();
-  const tx = db.transaction(['books', 'files'], 'readwrite');
-  try {
-    await tx.objectStore('files').put({ id: book.id, blob });
-    await tx.objectStore('books').put(book);
-    await tx.done;
-    return book;
-  } catch (error) {
-    try { tx.abort(); } catch { /* already aborted */ }
-    await tx.done.catch(() => {});
-    throw error;
+  const stored = await storedCover(book);
+  async function commit(file) {
+    const tx = db.transaction(['books', 'files'], 'readwrite');
+    // Handle the transaction rejection immediately as well as the request.
+    tx.done.catch(() => {});
+    try {
+      await tx.objectStore('files').put(file);
+      await tx.objectStore('books').put(stored);
+      await tx.done;
+    } catch (error) {
+      try { tx.abort(); } catch { /* already aborted */ }
+      await tx.done.catch(() => {});
+      throw error;
+    }
   }
+  try {
+    await commit(await fileRecord(book.id, blob));
+  } catch (error) {
+    if (!blobStorageError(error)) throw error;
+    needsFileBytes = true;
+    await commit(await fileRecord(book.id, blob, true));
+  }
+  return book;
 }
 
 export async function requestPersistentStorage() {

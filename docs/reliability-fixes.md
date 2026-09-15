@@ -16,6 +16,7 @@ These changes address the feature audit in its requested priority order.
 | Imports | Save book bytes and metadata atomically; serialize batches; acknowledge shared files only after successful import. |
 | Exports | Include cues in plain exports and provide complete Cornell/outline exports. Recover from Clipboard API rejection and report print failures. |
 | Storage | Request persistent storage when supported, report settings-save failures, and validate restored settings. |
+| WebKit storage | Store cover bytes and retry rejected Blob/File imports as bytes, preserving atomicity. Existing Blob-backed books remain readable. |
 | Offline | Precache PDF CMaps and decoder fallbacks along with existing fonts/decoders. |
 
 ## Deployment

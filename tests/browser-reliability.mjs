@@ -53,7 +53,13 @@ try {
       const result = await importFile(file);
       fixtureBooks[format] = { id: result.book.id, title: result.book.title };
       if (!(await db.hasBookFile(result.book.id))) throw new Error('Imported file missing');
+      const original = new Uint8Array(await file.arrayBuffer());
+      const recovered = new Uint8Array(await (await db.getBookFile(result.book.id)).arrayBuffer());
+      if (original.length !== recovered.length || original.some((value, index) => value !== recovered[index])) {
+        throw new Error('Stored book bytes changed: ' + format);
+      }
       if (format === 'pdf' && !result.book.cover) throw new Error('PDF fixture cover missing');
+      if (result.book.cover && !(await db.getBook(result.book.id)).cover?.size) throw new Error('Stored cover did not reload');
       if (format === 'pdf') await db.putHighlight({ id: 'pdf-drawer', bookId: result.book.id, format: 'pdf', page: 1, text: 'Drawer test quote', rects: [], createdAt: Date.now() });
     }
     const { default: JSZip } = await import('/node_modules/.vite/deps/jszip.js');
@@ -61,6 +67,15 @@ try {
     const canvas = document.createElement('canvas'); canvas.width = 20; canvas.height = 30;
     canvas.getContext('2d').fillRect(0, 0, 20, 30);
     const png = await new Promise(resolve => canvas.toBlob(resolve));
+    await db.updateBook(book.id, { cover: png });
+    await db.updateBook(book.id, { title: 'Renamed book' });
+    if ((await db.getBook(book.id)).cover.size !== png.size) throw new Error('Metadata update lost cover');
+    await db.updateBook(book.id, { cover: null });
+    if ((await db.getBook(book.id)).cover) throw new Error('Cover removal retained stale bytes');
+    try {
+      await db.saveImportedBook({ ...book, id: 'failed-import', invalid: () => {} }, png);
+    } catch {}
+    if (await db.hasBookFile('failed-import')) throw new Error('Failed import left orphan bytes');
     for (const version of [2, 3]) {
       const zip = new JSZip();
       zip.file('META-INF/container.xml', '<container><rootfiles><rootfile full-path="OEBPS/book.opf"/></rootfiles></container>');

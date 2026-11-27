@@ -392,3 +392,13 @@ The app uses pdf.js's `legacy` build. The modern build relies on very new
 JavaScript built-ins that current Safari and iOS do not have yet; the legacy build
 ships the polyfills and behaves identically. PDF rendering is also configured
 without eval and without XFA, so a book cannot run scripts of its own.
+
+### Auto Backup
+
+Open **About → Auto Backup** to opt in. The two latest distinct saved notes
+snapshots live in this installation. You can recover highlights, study sheets,
+projects and reading positions without deleting unrelated entries. Imported
+EPUB/PDF binaries and sync credentials are not copied. **Save to Files** uses
+the browser's share/download control; keep a separate export if you might clear
+website data or switch devices. Ordinary manual imports still merge without
+replacing existing edits.

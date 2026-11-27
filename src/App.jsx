@@ -34,7 +34,8 @@ import {
   updateBook,
   updateHighlight as dbUpdateHighlight,
 } from './lib/db.js';
-import { restoreBackup } from './lib/backup.js';
+import { buildBackup, parseBackup, restoreBackup } from './lib/backup.js';
+import { makeAutoBackup } from './lib/autoBackup.js';
 import { getSyncConfig, syncNow } from './lib/sync.js';
 import { importFilesSerial as importFiles, repairBookCover } from './lib/importBook.js';
 import { loadSettings, saveSettings, DEFAULT_SETTINGS } from './lib/settings.js';
@@ -510,6 +511,23 @@ export default function App() {
     [refreshBooks, refreshHighlights, refreshProjects, refreshSummaries],
   );
 
+  const autoBackup = useMemo(() => makeAutoBackup({
+    id: 'marginalia-notes',
+    scope: 'Backs up highlights, study sheets, projects and reading positions. Book files and sync settings are not included. Recovery can replace edits in matching records but does not delete unrelated records.',
+    async capture() {
+      const {exportedAt, appVersion, ...snapshot} = await buildBackup();
+      return JSON.stringify(snapshot);
+    },
+    validate(raw) { parseBackup(raw); return raw; },
+    async restore(raw) {
+      await restoreBackup(new Blob([raw]), {recoverEdits:true});
+      await Promise.all([refreshBooks(), refreshHighlights(), refreshProjects(), refreshSummaries()]);
+    },
+  }),[refreshBooks, refreshHighlights, refreshProjects, refreshSummaries]);
+  useEffect(() => {
+    if (settingsReady && books) void autoBackup.record();
+  }, [settingsReady, books, highlights, projects, summaries, autoBackup]);
+
   const repairCover = useCallback((book, replacement = null, automatic = false) => {
     if (!book?.id || (automatic && (book.missingFile || coverAttempts.current.has(book.id)))) return;
     if (automatic) coverAttempts.current.add(book.id);
@@ -647,6 +665,10 @@ export default function App() {
           onCheck={runCheck}
           onUpdate={applyUpdateSafely}
           onToggleAuto={setAutoUpdate}
+          onAutoBackup={() => {
+            setShowAbout(false);
+            void autoBackup.open().catch(() => notify('Auto Backup is unavailable in this browser.', 'error'));
+          }}
           onClose={() => setShowAbout(false)}
         />
       )}

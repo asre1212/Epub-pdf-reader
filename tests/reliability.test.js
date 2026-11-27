@@ -104,3 +104,34 @@ test('upload batches honor record count and byte limits', () => {
     assert.ok(Buffer.byteLength(JSON.stringify(batch)) < 1800000);
   }
 });
+test('automatic recovery restores matching edits without touching unrelated books or their files', async () => {
+  const current = { ...book, location: 'new-cfi', progress: 0.8, coverData: new Uint8Array([1,2]) };
+  const other = { ...book, id: 'b2', fingerprint: 'other', location: 'unrelated' };
+  const localNote = { id: 'h1', bookId: 'b1', text: 'Quote', cfi: 'q', format: 'epub', note: 'changed' };
+  const calls = [];
+  const { restoreBackup } = backupModule({
+    withRestoreTransaction: async fn => fn({
+      listBooks: async () => [current, other],
+      listHighlights: async () => [localNote],
+      listProjects: async () => [],
+      getSummary: async () => ({id:'b1',summary:'changed',chapters:{one:'changed'}}),
+      putBook: async value => calls.push(['book', structuredClone(value)]),
+      putSummary: async value => calls.push(['summary', structuredClone(value)]),
+      putHighlight: async value => calls.push(['highlight', structuredClone(value)]),
+    }),
+  });
+  const snapshot = {
+    format:'marginalia-notes-backup', version:2,
+    books:[{...book,location:'older-cfi',progress:0.3}],
+    summaries:[{id:'b1',summary:'earlier summary',chapters:{one:'older chapter'}}],
+    highlights:[{...localNote,note:'older note'}],
+  };
+  const report = await restoreBackup({text:async()=>JSON.stringify(snapshot)}, {recoverEdits:true});
+  assert.equal(report.restored,1);
+  assert.deepEqual(calls.map(([kind])=>kind),['book','summary','highlight']);
+  assert.equal(calls[0][1].location,'older-cfi');
+  assert.deepEqual(calls[0][1].coverData,new Uint8Array([1,2]));
+  assert.equal(calls[1][1].chapters.one,'older chapter');
+  assert.equal(calls[2][1].note,'older note');
+  assert.equal(other.location,'unrelated');
+});

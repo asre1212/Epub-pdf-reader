@@ -20,7 +20,7 @@ function relativeTime(timestamp) {
 }
 
 /** Version, update controls, and the offline/storage status of the install. */
-export default function AboutSheet({ update, usage, onCheck, onUpdate, onToggleAuto, onClose }) {
+export default function AboutSheet({ update, usage, onCheck, onUpdate, onToggleAuto, onAutoBackup, onClose }) {
   const built = formatWhen(BUILD_TIME);
 
   let status;
@@ -51,6 +51,8 @@ export default function AboutSheet({ update, usage, onCheck, onUpdate, onToggleA
       >
         <div className="sheet-grip" aria-hidden="true" />
         <h2 className="sheet-title">About</h2>
+
+        <button className="btn" type="button" onClick={onAutoBackup}>Auto Backup</button>
 
         <div className="about-id">
           <div className="about-mark" aria-hidden="true" />

@@ -175,7 +175,7 @@ export function parseBackup(text) {
  * overwritten: highlights already present are left alone, so restoring the same
  * file twice is harmless.
  */
-export async function restoreBackup(file) {
+export async function restoreBackup(file, { recoverEdits = false } = {}) {
   const data = parseBackup(await file.text());
 
   return withRestoreTransaction(async ({ listBooks, listHighlights, listProjects, getSummary, putBook, putHighlight, putProject, putSummary }) => {
@@ -189,6 +189,12 @@ export async function restoreBackup(file) {
   for (const backupBook of data.books || []) {
     const match = matchBook(backupBook, library);
     if (match) {
+      if (recoverEdits) {
+        match.title = backupBook.title;
+        match.location = backupBook.location;
+        match.progress = backupBook.progress ?? 0;
+        await putBook(match);
+      }
       target.set(backupBook.id, match);
       continue;
     }
@@ -223,6 +229,7 @@ export async function restoreBackup(file) {
       projects.find((p) => p.id === backupProject.id) ||
       projects.find((p) => normalise(p.name) === normalise(backupProject.name));
     if (match) {
+      if (recoverEdits) await putProject({...backupProject, id: match.id});
       projectTarget.set(backupProject.id, match.id);
       continue;
     }
@@ -246,7 +253,9 @@ export async function restoreBackup(file) {
     for (const [key, value] of Object.entries(record.chapters || {})) {
       if (!local?.chapters?.[key]) chapters[key] = value;
     }
-    await putSummary({ ...record, ...local, id: book.id, chapters, summary: local?.summary || record.summary || '' });
+    await putSummary(recoverEdits
+      ? { ...record, id: book.id }
+      : { ...record, ...local, id: book.id, chapters, summary: local?.summary || record.summary || '' });
     sheets += 1;
   }
 
@@ -275,7 +284,10 @@ export async function restoreBackup(file) {
       // if it is sitting unfiled and the backup knows where it belongs, putting
       // it back fills a gap rather than overwriting a choice. That is the whole
       // reason to restore a backup after losing a project.
-      if (candidate.projectId && !already.projectId) {
+      if (recoverEdits) {
+        await putHighlight({...candidate, id: already.id});
+        restored += 1;
+      } else if (candidate.projectId && !already.projectId) {
         await putHighlight({ ...already, projectId: candidate.projectId, updatedAt: Date.now() });
         already.projectId = candidate.projectId;
         refiled += 1;

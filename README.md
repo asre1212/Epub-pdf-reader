@@ -395,10 +395,8 @@ without eval and without XFA, so a book cannot run scripts of its own.
 
 ### Auto Backup
 
-Open **About → Auto Backup** to opt in. The two latest distinct saved notes
-snapshots live in this installation. You can recover highlights, study sheets,
-projects and reading positions without deleting unrelated entries. Imported
-EPUB/PDF binaries and sync credentials are not copied. **Save to Files** uses
-the browser's share/download control; keep a separate export if you might clear
-website data or switch devices. Ordinary manual imports still merge without
-replacing existing edits.
+Open **About → Auto Backup**. A supported browser can automatically keep the
+two latest copies in a folder you select. No new snapshots are kept inside the
+app. On iPhone browsers that cannot write to a selected folder automatically,
+use **Save current copy to Files**. Book binaries and sync settings are excluded.
+Older in-app copies, if any, remain available for recovery.
